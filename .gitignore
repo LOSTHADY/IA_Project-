@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Modèles et poids (jamais dans git)
+models/
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.ckpt
+
+# Données audio et checkpoints d'entraînement
+data/audio/
+data/raw/
+data/cache/
+checkpoints/
+runs/
+wandb/
+
+# Sorties d'évaluation (régénérables)
+eval/results/
+outputs/
+*.wav
+!data/testset/samples/*.wav
+
+.DS_Store
+.env

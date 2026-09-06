@@ -1,0 +1,33 @@
+{
+  "_comment": "Réponses gabarits validées par un locuteur natif. Chaque entrée court-circuite la traduction sortante : la réponse renvoyée est du bambara humain, sans erreur de MT. À remplir au fil des besoins — le pipeline fonctionne avec une banque vide (repli systématique sur la MT).",
+  "_schema": {
+    "id": "identifiant court et stable",
+    "triggers_bm": "formulations bambara qui déclenchent ce gabarit (plusieurs variantes recommandées)",
+    "response_bm": "réponse en bambara, VALIDÉE par un locuteur natif",
+    "response_fr": "traduction française de référence, pour l'évaluation",
+    "note": "commentaire libre (source, validateur, date)"
+  },
+  "templates": [
+    {
+      "id": "greeting",
+      "triggers_bm": ["i ni sɔgɔma", "i ni ce", "i ni tile", "aw ni ce"],
+      "response_bm": "Nba, i ni ce. N bɛ se ka i dɛmɛ cogo di?",
+      "response_fr": "Bonjour. Comment puis-je vous aider ?",
+      "note": "exemple de départ — à faire valider avant usage réel"
+    },
+    {
+      "id": "thanks",
+      "triggers_bm": ["i ni baara", "aw ni baara", "i ni ce kosɛbɛ"],
+      "response_bm": "Ala ka here caya. Foyi tɛ.",
+      "response_fr": "De rien.",
+      "note": "exemple de départ — à faire valider avant usage réel"
+    },
+    {
+      "id": "not_understood",
+      "triggers_bm": ["n ma faamu", "i ye mun fɔ"],
+      "response_bm": "Hakɛto, n ma faamu. I bɛ se k'a fɔ kokura?",
+      "response_fr": "Désolé, je n'ai pas compris. Pouvez-vous répéter ?",
+      "note": "exemple de départ — à faire valider avant usage réel"
+    }
+  ]
+}

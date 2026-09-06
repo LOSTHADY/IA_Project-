@@ -1,0 +1,140 @@
+# Assistant vocal bambara
+
+Un système de dialogue vocal en bambara (bamanankan) : on parle en bambara, il
+répond en bambara. Le raisonnement se fait en français, le bambara vit aux
+extrémités de la chaîne.
+
+```
+audio bm → ASR → [texte bm] → traduction → français → LLM
+                                                        ↓
+audio bm ←  TTS  ←  texte bm  ←  traduction  ←  français simple
+```
+
+> **Ce que ce projet n'est pas** : un LLM à qui l'on aurait appris le bambara.
+> Les données écrites disponibles sont inférieures d'environ trois ordres de
+> grandeur à ce qu'exigerait un pré-entraînement. C'est un projet de
+> **transduction vocale**, et le LLM y est un composant interchangeable.
+> Voir [`docs/METHODE.md`](docs/METHODE.md).
+
+## Deux architectures, comparées
+
+| | Maillons | Transcription bambara | Gabarits |
+|---|---|---|---|
+| **cascade** | ASR(bm) → MT → LLM → MT → TTS | oui | oui |
+| **bout-en-bout** | ASR(bm→fr) → LLM → MT → TTS | non | non |
+
+Jeli-ASR fournit pour chaque audio la transcription bambara *et* sa traduction
+française : un seul Whisper multi-tâche donne les deux variantes avec le même
+encodeur. La comparaison porte donc bien sur l'architecture, et sur rien
+d'autre. C'est la contribution centrale du travail.
+
+## Installation
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+L'inférence tourne sur CPU. L'entraînement se fait sur Colab (cf. `scripts/`).
+
+## Utilisation
+
+```bash
+# Vérifier que les composants se chargent
+python -m bambara_voice.cli check
+
+# Un tour de parole, en partant du texte (sans ASR)
+python -m bambara_voice.cli text "i ni sɔgɔma"
+
+# Un tour complet, avec réponse audio
+python -m bambara_voice.cli audio enregistrement.wav --out reponse.wav
+
+# En variante bout-en-bout
+python -m bambara_voice.cli audio enregistrement.wav --arch e2e
+
+# Démo interactive
+python app/gradio_app.py
+```
+
+Pour itérer sur le pipeline sans charger de LLM :
+`--llm-backend echo` renvoie une réponse bouchon déterministe.
+
+## Évaluation
+
+```bash
+python scripts/prepare_testset.py data/testset/testset.jsonl   # contrôles
+python -m eval.run_eval --testset data/testset/testset.jsonl --arch cascade
+python -m eval.run_eval --testset data/testset/testset.jsonl --arch e2e
+python -m eval.compare eval/results/*.json                     # tableau Markdown
+```
+
+Le rapport produit : WER/CER strict **et relâché**, chrF++/BLEU, propagation
+d'erreurs entre l'ASR et le reste de la chaîne, latence par étape, RTF, et
+taux de couverture des gabarits.
+
+L'écart entre WER strict et WER relâché mesure la part d'erreur imputable à la
+seule variation orthographique (ɛ/ɔ/ɲ/ŋ contre approximations ASCII) — sans
+cette distinction, un modèle produisant un bambara correct mais en ASCII
+paraît bien pire qu'il n'est.
+
+## Entraînement (Colab)
+
+```bash
+# Whisper multi-tâche : transcription bambara + traduction française
+python scripts/finetune_whisper.py --dataset RobotsMali/jeli-asr \
+    --model openai/whisper-small --task both
+
+# NLLB, un modèle par sens
+python scripts/finetune_nllb.py --direction bm2fr
+python scripts/finetune_nllb.py --direction fr2bm
+```
+
+## Structure
+
+```
+bambara_voice/     pipeline d'inférence
+  config.py        tous les identifiants de modèles, en un seul endroit
+  normalize.py     normalisation et repli orthographique du bambara
+  asr.py           Whisper (transcription bm ou traduction directe fr)
+  mt.py            NLLB bambara <-> français
+  llm.py           modèle de dialogue + contrainte de style traduisible
+  tts.py           synthèse vocale bambara
+  templates.py     réponses validées par un locuteur natif
+  pipeline.py      orchestration + trace chronométrée de chaque tour
+eval/              métriques, jeu de test, rapports comparatifs
+scripts/           fine-tuning Colab, préparation du jeu de test
+app/               démo Gradio
+docs/METHODE.md    partis pris méthodologiques
+data/templates.json  banque de gabarits (à remplir)
+data/testset/      jeu de test (à collecter — chemin critique)
+```
+
+## État
+
+| Phase | | |
+|---|---|---|
+| 0 | Squelette, harnais d'évaluation, normalisation | fait |
+| 1 | Références zero-shot | à faire |
+| 2 | **Jeu de test, 200–500 énoncés** | à faire — chemin critique |
+| 3 | Fine-tuning Whisper + NLLB | à faire |
+| 4 | Comparaison des deux architectures | à faire |
+| 5 | Assemblage CPU, quantisation, démo | à faire |
+
+La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
+défendable. Voir [`data/testset/README.md`](data/testset/README.md) pour le
+format, la composition à viser et les questions de consentement et de licence.
+
+## Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+Couvrent la logique déterministe (normalisation, gabarits, simplification,
+métriques) sans charger de modèle. Les composants à modèles se vérifient avec
+`python -m bambara_voice.cli check`.
+
+## Licence
+
+À définir avant toute diffusion de données audio — la décision engage aussi
+les locuteurs enregistrés.
