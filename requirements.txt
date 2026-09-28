@@ -9,16 +9,15 @@ numpy>=1.24
 # --- Évaluation ---
 jiwer>=3.0          # WER / CER
 sacrebleu>=2.4      # BLEU / chrF++
+datasets>=2.20      # Jeli-ASR, Bayelemabaga (eval.corpora)
 pandas>=2.0
 
 # --- Démo ---
 gradio>=4.44
 
 # --- Entraînement (Colab uniquement, cf. scripts/) ---
-# datasets>=2.20
-# accelerate>=0.33
+# accelerate>=1.1    # requis par le Trainer de transformers
 # peft>=0.12
-# evaluate>=0.4
 # bitsandbytes>=0.43
 
 # --- LLM local en GGUF (optionnel, backend "llamacpp") ---

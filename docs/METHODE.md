@@ -123,6 +123,17 @@ traduction — depuis la transcription de référence, puis depuis la sortie de
 l'ASR. La différence isole le coût de l'ASR indépendamment de la qualité de la
 traduction.
 
+Deux règles garantissent que les chiffres se comparent d'une phase à
+l'autre :
+
+- **Le test ne sert qu'à mesurer.** Le meilleur checkpoint est choisi sur
+  une validation, prise dans `train` si le jeu n'en fournit pas. Choisir sur
+  le test puis y rapporter le score le rendrait optimiste.
+- **Même échantillon partout.** Références zero-shot, modèles affinés,
+  cascade et bout-en-bout sont évalués sur les mêmes énoncés : même corpus,
+  même partition, même graine (`eval.baselines`). Chaque rapport consigne
+  ces paramètres ainsi que les versions des bibliothèques.
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source

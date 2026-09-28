@@ -64,7 +64,23 @@ def test_run_asr_et_propagation():
     assert len(rows) == 1
     assert report["asr"]["wer"] > 0 and report["asr"]["wer_folded"] == 0
     assert report["propagation_erreurs"]["perte_absolue"] == 0
-    assert report["latence"]["rtf_moyen"] >= 0 and "asr" in report["latence"]["par_etape_s"]
+    # La traduction de la sortie de l'ASR fait partie du chemin de la cascade.
+    assert list(report["latence"]["par_etape_s"]) == ["asr", "mt_in"]
+    assert report["latence"]["rtf_moyen"] >= 0
+
+
+def test_run_asr_bout_en_bout_note_le_francais_directement():
+    exs = [Example(id="a", bm="n bɛ taa", fr="je pars", audio=AUDIO),
+           Example(id="b", bm="n bɛ taa", fr="", audio=AUDIO)]  # sans français : ignoré
+
+    class DirectFr:
+        def transcribe(self, audio):
+            return ASRResult(text="je pars", language="fr", audio_seconds=2.0)
+
+    report, rows = baselines.run_asr(exs, DirectFr(), e2e=True)
+    assert len(rows) == 1 and "asr" not in report
+    assert round(report["mt_in_depuis_asr"]["chrf"]) == 100
+    assert list(report["latence"]["par_etape_s"]) == ["asr"]
 
 
 def test_run_asr_sans_traduction_de_reference():
@@ -120,19 +136,34 @@ def test_cli_asr_mt_tts_et_tableau(tmp_path, fakes):
     common = ["--out", str(out), "--device", "cpu"]
 
     baselines.main(common + ["asr", "--dataset", str(jeli), "--with-mt", "--limit", "2"])
-    asr = _report(out, "zero-shot-asr")
-    assert asr["nom"] == "zero-shot whisper-small (sw)"
+    asr = _report(out, "asr-cascade")
+    assert asr["nom"] == "whisper-small + nllb-200-distilled-600M"
     assert asr["corpus"]["evaluees"] == 2 and asr["corpus"]["partition"] == "test"
     assert asr["environnement"]["appareil"] == "cpu" and "propagation_erreurs" in asr
 
-    baselines.main(common + ["mt", "--dataset", str(bayel)])
-    mt = _report(out, "zero-shot-mt")
+    baselines.main(common + ["--label", "bout-en-bout", "asr", "--dataset", str(jeli),
+                             "--task", "translate"])
+    e2e = _report(out, "asr-e2e")
+    assert e2e["nom"] == "bout-en-bout" and e2e["architecture"] == "e2e"
+    assert "asr" not in e2e and e2e["composition"]["n"] == 3
+
+    baselines.main(common + ["mt", "--dataset", str(bayel),
+                             "--bm2fr-model", "ckpt/nllb-bm2fr", "--fr2bm-model", "ckpt/nllb-fr2bm"])
+    mt = _report(out, "mt")
+    assert mt["nom"] == "nllb-bm2fr + nllb-fr2bm / bayel"
     assert mt["corpus"]["partition"] == "validation" and mt["composition"]["n"] == 2
 
     baselines.main(common + ["tts", "--dataset", str(jeli), "--limit", "2"])
-    tts = _report(out, "zero-shot-tts")
+    tts = _report(out, "tts")
     assert tts["composition"]["n"] == 2 and Path(tts["tts"]["dossier"]).is_dir()
 
-    table = to_markdown([asr, mt, tts])
-    assert "zero-shot whisper-small (sw)" in table
+    table = to_markdown([asr, e2e, mt, tts])
+    assert "| bout-en-bout |" in table.splitlines()[0]
+    # Cascade et bout-en-bout sur la même ligne : la comparaison centrale.
+    [row] = [line for line in table.splitlines() if line.startswith("| chrF++ (depuis ASR)")]
+    assert row.count("—") == 2  # renseignée pour asr et e2e, vide pour mt et tts
     assert "WER relâché" in table and "chrF++ fr→bm (replié)" in table
+
+    with pytest.raises(SystemExit):
+        baselines.main(common + ["asr", "--dataset", str(jeli), "--task", "translate",
+                                 "--with-mt"])

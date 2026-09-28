@@ -136,25 +136,40 @@ class SpeechRecognizer:
         }
         if cfg.language:
             gen_kwargs["language"] = cfg.language
-        try:
-            with torch.no_grad():
-                ids = self._model.generate(**inputs, **gen_kwargs)
-        except (ValueError, TypeError) as exc:
-            # Modèle sans tokens de langue/tâche (ex. checkpoint mono-langue
-            # aux tokens figés). Jamais de repli en traduction : sans tâche
-            # forcée, Whisper transcrirait, et la variante e2e mesurerait
-            # silencieusement autre chose.
+
+        missing = self._missing_prompt_tokens()
+        if missing:
+            # Jamais de repli en traduction : sans tâche forcée, Whisper
+            # transcrirait, et la variante e2e mesurerait silencieusement
+            # autre chose.
             if cfg.task == "translate":
-                raise ValueError(
-                    f"{cfg.model_id} refuse task='translate' "
-                    f"(language={cfg.language!r}) : {exc}"
-                ) from exc
-            logger.warning("Langue/tâche non forçables (%s) : génération sans contrainte", exc)
+                raise ValueError(f"{cfg.model_id} ne connaît pas {missing} : "
+                                 f"traduction directe impossible")
+            logger.warning("%s ne connaît pas %s : génération sans langue ni tâche imposées",
+                           cfg.model_id, missing)
             gen_kwargs.pop("task")
             gen_kwargs.pop("language", None)
-            with torch.no_grad():
-                ids = self._model.generate(**inputs, **gen_kwargs)
 
+        with torch.no_grad():
+            ids = self._model.generate(**inputs, **gen_kwargs)
         return self._processor.batch_decode(ids, skip_special_tokens=True)[0]
+
+    def _missing_prompt_tokens(self) -> list[str]:
+        """Tokens de langue/tâche demandés mais absents du modèle.
+
+        Vérifié à l'avance plutôt qu'en rattrapant l'erreur de `generate` :
+        une erreur sans rapport (longueur, mémoire) ne doit pas passer pour
+        un problème de langue.
+        """
+        gc = self._model.generation_config
+        missing = []
+        if self.config.language:
+            token = self.config.language
+            token = token if token.startswith("<|") else f"<|{token}|>"
+            if token not in (getattr(gc, "lang_to_id", None) or {}):
+                missing.append(token)
+        if self.config.task not in (getattr(gc, "task_to_id", None) or {}):
+            missing.append(self.config.task)
+        return missing
 
     __call__ = transcribe

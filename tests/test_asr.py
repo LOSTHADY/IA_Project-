@@ -96,20 +96,31 @@ def test_detection_automatique_si_langue_nulle():
 
 
 def test_langue_inconnue_repli_en_transcription(caplog):
-    # Whisper n'a pas de token "bm" : transformers lève ValueError.
+    # Whisper n'a pas de token "bm" (transformers lèverait ValueError).
     rec, calls = _recognizer(language="bm")
     with caplog.at_level(logging.WARNING):
         rec.transcribe(AUDIO)
-    assert len(calls) == 2 and "task" not in calls[1]
-    assert "non forçables" in caplog.text
+    assert len(calls) == 1 and "task" not in calls[0] and "language" not in calls[0]
+    assert "<|bm|>" in caplog.text
 
 
 def test_langue_inconnue_jamais_de_repli_en_traduction():
     # Sans tâche forcée, Whisper transcrirait : la variante e2e mesurerait
     # autre chose sans que rien ne le signale.
     rec, calls = _recognizer(language="bm", task="translate")
-    with pytest.raises(ValueError, match="translate"):
+    with pytest.raises(ValueError, match="traduction directe impossible"):
         rec.transcribe(AUDIO)
+    assert calls == []
+
+
+def test_une_erreur_sans_rapport_n_est_pas_prise_pour_un_probleme_de_langue():
+    # Ancien comportement : toute ValueError de generate déclenchait le
+    # repli, et une erreur de longueur passait pour une langue inconnue.
+    rec, calls = _recognizer(task="translate")
+    rec.config.max_new_tokens = 10_000  # dépasse le décodeur du modèle
+    with pytest.raises(ValueError) as err:
+        rec.transcribe(AUDIO)
+    assert "traduction directe impossible" not in str(err.value)
     assert len(calls) == 1
 
 

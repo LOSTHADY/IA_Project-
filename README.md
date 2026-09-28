@@ -110,17 +110,32 @@ seule variation orthographique (ɛ/ɔ/ɲ/ŋ contre approximations ASCII) — san
 cette distinction, un modèle produisant un bambara correct mais en ASCII
 paraît bien pire qu'il n'est.
 
-## Entraînement (Colab)
+## Fine-tuning et comparaison des architectures (phases 3-4)
+
+[![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase3_finetuning.ipynb)
+
+Le notebook [`notebooks/phase3_finetuning.ipynb`](notebooks/phase3_finetuning.ipynb)
+entraîne les modèles, puis compare cascade et bout-en-bout avec le protocole
+de la phase 1. Les checkpoints vont sur Drive, et `--resume` reprend après
+une coupure de session.
 
 ```bash
 # Whisper multi-tâche : transcription bambara + traduction française
 python scripts/finetune_whisper.py --dataset RobotsMali/jeli-asr \
-    --model openai/whisper-small --task both
+    --model openai/whisper-small --task both --output ckpt/whisper-bm --resume
 
 # NLLB, un modèle par sens
-python scripts/finetune_nllb.py --direction bm2fr
-python scripts/finetune_nllb.py --direction fr2bm
+python scripts/finetune_nllb.py --direction bm2fr --output ckpt/nllb-bm2fr --resume
+python scripts/finetune_nllb.py --direction fr2bm --output ckpt/nllb-fr2bm --resume
+
+# Même Whisper, deux architectures : seule la tâche change
+python -m eval.baselines --label cascade asr --model ckpt/whisper-bm \
+    --with-mt --mt-model ckpt/nllb-bm2fr
+python -m eval.baselines --label bout-en-bout asr --model ckpt/whisper-bm --task translate
 ```
+
+Les spectrogrammes sont calculés à la volée : les précalculer occuperait des
+dizaines de Go pour Jeli-ASR.
 
 ## Structure
 
@@ -137,7 +152,7 @@ bambara_voice/     pipeline d'inférence
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, préparation du jeu de test
 app/               démo Gradio, application de collecte
-notebooks/         notebooks Colab (phase 1)
+notebooks/         notebooks Colab (phases 1 et 3-4)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 data/templates.json  banque de gabarits (à remplir)
@@ -151,8 +166,8 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
 | 1 | Références zero-shot | notebook prêt, à exécuter sur Colab |
 | 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
-| 3 | Fine-tuning Whisper + NLLB | à faire |
-| 4 | Comparaison des deux architectures | à faire |
+| 3 | Fine-tuning Whisper + NLLB | scripts testés de bout en bout sur petits modèles, notebook prêt |
+| 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
 | 5 | Assemblage CPU, quantisation, démo | à faire |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
@@ -166,8 +181,13 @@ python -m pytest tests/ -q
 ```
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,
-métriques, collecte) sans charger de modèle. Les composants à modèles se vérifient avec
-`python -m bambara_voice.cli check`.
+métriques, collecte, corpus) sans rien télécharger. Les parties à modèles
+(ASR, fine-tuning, évaluation) tournent sur de minuscules modèles aléatoires
+construits localement (`tests/tiny_models.py`). `tests/test_finetune.py`
+entraîne réellement Whisper et NLLB puis compare les deux architectures, en
+environ une minute : c'est lui qui détecte une rupture d'API de
+transformers avant qu'elle ne coûte une session Colab. Les vrais modèles se
+vérifient avec `python -m bambara_voice.cli check`.
 
 ## Licence
 

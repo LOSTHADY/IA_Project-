@@ -43,6 +43,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lr", type=float, default=3e-5)
     p.add_argument("--max-length", type=int, default=128)
     p.add_argument("--max-samples", type=int, default=None)
+    p.add_argument("--resume", action="store_true",
+                   help="reprendre au dernier checkpoint de --output s'il existe")
     p.add_argument("--push-to-hub", default=None, metavar="REPO_ID")
     return p
 
@@ -52,6 +54,7 @@ def main() -> None:
     output = args.output or f"checkpoints/nllb-{args.direction}"
 
     import torch
+    from transformers.trainer_utils import get_last_checkpoint
     from transformers import (
         AutoTokenizer, AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
@@ -76,6 +79,10 @@ def main() -> None:
         args.model, src_lang=src_lang, tgt_lang=tgt_lang
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model)
+    # Sans langue cible imposée, la génération de validation peut partir dans
+    # une autre langue : le chrF++ qui choisit le meilleur checkpoint serait
+    # faux. Même contrainte qu'à l'inférence (bambara_voice.mt).
+    model.generation_config.forced_bos_token_id = tokenizer.convert_tokens_to_ids(tgt_lang)
 
     eval_key = next((k for k in ("validation", "valid", "dev") if k in ds), None)
     if eval_key is None:
@@ -147,7 +154,10 @@ def main() -> None:
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
     )
-    trainer.train()
+    last = get_last_checkpoint(output) if args.resume and Path(output).is_dir() else None
+    if args.resume:
+        print(f"Reprise depuis {last}" if last else "Aucun checkpoint : départ de zéro")
+    trainer.train(resume_from_checkpoint=last)
     trainer.save_model(output)
     tokenizer.save_pretrained(output)
     print(f"Modèle {args.direction} enregistré dans {output}")

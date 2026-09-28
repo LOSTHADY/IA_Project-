@@ -1,23 +1,32 @@
-"""Références zero-shot (phase 1) : chaque maillon, sans aucun fine-tuning.
+"""Évaluation maillon par maillon : références zero-shot, puis modèles affinés.
 
+    # Phase 1 — modèles publics tels quels
     python -m eval.baselines asr --model openai/whisper-small --limit 300
     python -m eval.baselines asr --model facebook/mms-1b-all --kind ctc \\
         --target-lang bam --with-mt --limit 300
     python -m eval.baselines mt --dataset RobotsMaliAI/bayelemabaga --limit 500
-    python -m eval.baselines mt --dataset RobotsMali/jeli-asr --limit 500
     python -m eval.baselines tts --limit 20
-    python -m eval.compare eval/results/zero-shot-*.json
 
-Ces chiffres sont la « référence basse » du mémoire : ce que donnent les
-modèles publics tels quels. Chaque rapport consigne ce qui a été mesuré
-(modèle, corpus, partition, graine, appareil, versions) et garde les sorties
-ligne à ligne pour l'analyse d'erreurs.
+    # Phase 3-4 — mêmes mesures, modèles affinés, les deux architectures
+    python -m eval.baselines --label "cascade" asr --model ckpt/whisper-bm \\
+        --with-mt --mt-model ckpt/nllb-bm2fr
+    python -m eval.baselines --label "bout-en-bout" asr --model ckpt/whisper-bm \\
+        --task translate
 
-Pas de bout-en-bout zero-shot : la tâche `translate` de Whisper ne produit
-que de l'anglais. La variante B n'existe qu'après fine-tuning (phase 3).
+    python -m eval.compare eval/results/*.json
 
-Les composants sont ceux du pipeline (`bambara_voice`), pas des copies :
-cette phase éprouve aussi le code qui servira à la démo.
+Même corpus, même partition, même graine : les chiffres de chaque phase se
+comparent directement. En bout-en-bout, Whisper produit le français lui-même
+et son chrF++ se lit sur la même ligne du tableau que celui de la cascade
+(« chrF++ (depuis ASR) ») : c'est la comparaison centrale du mémoire.
+
+Pas de bout-en-bout zero-shot : la tâche `translate` de Whisper d'origine ne
+produit que de l'anglais. La variante B n'existe qu'après fine-tuning.
+
+Chaque rapport consigne ce qui a été mesuré (modèles, corpus, partition,
+graine, appareil, versions) et garde les sorties ligne à ligne pour
+l'analyse d'erreurs. Les composants sont ceux du pipeline (`bambara_voice`),
+pas des copies : l'évaluation éprouve aussi le code de la démo.
 """
 
 from __future__ import annotations
@@ -62,30 +71,48 @@ def _latency(rows: list[dict], steps: dict[str, str]) -> dict:
 
 # --- maillons -----------------------------------------------------------------
 
-def run_asr(examples: Iterable[Example], recognizer, translator=None) -> tuple[dict, list[dict]]:
-    """WER/CER strict et relâché ; avec un traducteur, la propagation
-    d'erreurs de l'ASR vers la traduction entrante (cascade, levier 1)."""
+def run_asr(examples: Iterable[Example], recognizer, translator=None,
+            e2e: bool = False) -> tuple[dict, list[dict]]:
+    """Entrée de la chaîne, de l'audio bambara jusqu'au français.
+
+    - cascade : WER/CER strict et relâché ; avec un traducteur, chrF++ du
+      français obtenu et propagation des erreurs de l'ASR (levier 1).
+    - e2e : l'ASR produit directement le français, noté contre la même
+      référence que la cascade.
+    """
     rows = []
     for ex in examples:
-        if ex.audio is None or not ex.bm:
+        if ex.audio is None or not (ex.fr if e2e else ex.bm):
             continue
         t0 = time.perf_counter()
         res = recognizer.transcribe(ex.audio)
-        rows.append({"id": ex.id, "ref_bm": ex.bm, "hyp_bm": res.text, "ref_fr": ex.fr,
-                     "secondes": time.perf_counter() - t0,
-                     "duree_audio_s": len(ex.audio) / 16_000})
+        t1 = time.perf_counter()
+        row = {"id": ex.id, "ref_bm": ex.bm, "ref_fr": ex.fr,
+               ("hyp_fr" if e2e else "hyp_bm"): res.text,
+               "secondes_asr": t1 - t0, "duree_audio_s": len(ex.audio) / 16_000}
+        if translator is not None and not e2e:
+            # Traduction de la sortie de l'ASR : c'est le chemin réel de la
+            # cascade, et son temps compte dans la latence.
+            row["mt_depuis_asr"] = translator.translate(res.text)
+            row["secondes_mt"] = time.perf_counter() - t1
+        rows.append(row)
     if not rows:
-        raise RuntimeError("aucun exemple avec audio et transcription")
+        raise RuntimeError("aucun exemple avec audio et référence")
 
-    report = {
-        "asr": score_asr([r["hyp_bm"] for r in rows], [r["ref_bm"] for r in rows]).to_dict(),
-        "latence": _latency(rows, {"asr": "secondes"}),
-    }
+    steps = {"asr": "secondes_asr"}
+    if translator is not None and not e2e:
+        steps["mt_in"] = "secondes_mt"
+    report: dict = {"latence": _latency(rows, steps)}
 
+    if e2e:
+        report["mt_in_depuis_asr"] = score_mt(
+            [r["hyp_fr"] for r in rows], [r["ref_fr"] for r in rows]).to_dict()
+        return report, rows
+
+    report["asr"] = score_asr([r["hyp_bm"] for r in rows], [r["ref_bm"] for r in rows]).to_dict()
     with_fr = [r for r in rows if r["ref_fr"]]
     if translator is not None and with_fr:
         for r in with_fr:
-            r["mt_depuis_asr"] = translator.translate(r["hyp_bm"])
             r["mt_depuis_ref"] = translator.translate(r["ref_bm"])
         refs = [r["ref_fr"] for r in with_fr]
         from_asr = score_mt([r["mt_depuis_asr"] for r in with_fr], refs)
@@ -213,23 +240,29 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
     from bambara_voice.asr import SpeechRecognizer
     from bambara_voice.mt import Translator
 
-    ds, cols, idx, corpus = _load(args, need_audio=True, need_fr=False)
+    e2e = args.task == "translate"
+    if e2e and (args.with_mt or args.kind == "ctc"):
+        raise SystemExit("--task translate : Whisper seul, sans --with-mt ni modèle CTC")
+    ds, cols, idx, corpus = _load(args, need_audio=True, need_fr=e2e)
     language = None if args.language == "none" else args.language
-    asr_cfg = ASRConfig(model_id=args.model, kind=args.kind, language=language,
-                        target_lang=args.target_lang)
+    asr_cfg = ASRConfig(model_id=args.model, task=args.task, kind=args.kind,
+                        language=language, target_lang=args.target_lang)
     recognizer = SpeechRecognizer(asr_cfg, args.device)
     translator = None
     if args.with_mt:
         translator = Translator(MTConfig(model_id=args.mt_model, src_lang=BAM, tgt_lang=FRA),
                                 args.device)
-    report, rows = run_asr(iter_examples(ds, cols, idx), recognizer, translator)
-    name = f"zero-shot {_short(args.model)}"
-    if args.kind == "whisper":
+    report, rows = run_asr(iter_examples(ds, cols, idx), recognizer, translator, e2e=e2e)
+
+    name = _short(args.model)
+    if args.kind == "whisper" and language != "sw":
         name += f" ({language or 'auto'})"
-    return {"nom": name, "maillon": "asr", "corpus": corpus,
-            "composition": {"n": report["asr"]["n"]},
-            "modeles": {"asr": args.model, "kind": args.kind, "language": language,
-                        "target_lang": args.target_lang,
+    name += " → fr" if e2e else (f" + {_short(args.mt_model)}" if args.with_mt else "")
+    n = report["mt_in_depuis_asr" if e2e else "asr"]["n"]
+    return {"nom": args.label or name, "architecture": "e2e" if e2e else "cascade",
+            "maillon": "asr", "corpus": corpus, "composition": {"n": n},
+            "modeles": {"asr": args.model, "kind": args.kind, "task": args.task,
+                        "language": language, "target_lang": args.target_lang,
                         **({"mt_in": args.mt_model} if args.with_mt else {})},
             **report}, rows
 
@@ -238,13 +271,19 @@ def cmd_mt(args) -> tuple[dict, list[dict]]:
     from bambara_voice.mt import Translator
 
     ds, cols, idx, corpus = _load(args, need_audio=False, need_fr=True)
-    bm2fr = Translator(MTConfig(model_id=args.mt_model, src_lang=BAM, tgt_lang=FRA), args.device)
-    fr2bm = Translator(MTConfig(model_id=args.mt_model, src_lang=FRA, tgt_lang=BAM), args.device)
+    # Un modèle par sens après fine-tuning (scripts/finetune_nllb.py), le
+    # même NLLB pour les deux en zero-shot.
+    bm2fr_id = args.bm2fr_model or args.mt_model
+    fr2bm_id = args.fr2bm_model or args.mt_model
+    bm2fr = Translator(MTConfig(model_id=bm2fr_id, src_lang=BAM, tgt_lang=FRA), args.device)
+    fr2bm = Translator(MTConfig(model_id=fr2bm_id, src_lang=FRA, tgt_lang=BAM), args.device)
     report, rows = run_mt(iter_examples(ds, cols, idx, with_audio=False), bm2fr, fr2bm)
-    return {"nom": f"zero-shot {_short(args.mt_model)} / {_short(args.dataset)}",
-            "maillon": "mt", "corpus": corpus,
+    models = _short(bm2fr_id) if bm2fr_id == fr2bm_id else \
+        f"{_short(bm2fr_id)} + {_short(fr2bm_id)}"
+    return {"nom": args.label or f"{models} / {_short(args.dataset)}",
+            "architecture": "traduction", "maillon": "mt", "corpus": corpus,
             "composition": {"n": report["mt_bm_fr"]["n"]},
-            "modeles": {"mt": args.mt_model}, **report}, rows
+            "modeles": {"mt_bm_fr": bm2fr_id, "mt_fr_bm": fr2bm_id}, **report}, rows
 
 
 def cmd_tts(args) -> tuple[dict, list[dict]]:
@@ -260,8 +299,8 @@ def cmd_tts(args) -> tuple[dict, list[dict]]:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     synth = SpeechSynthesizer(TTSConfig(model_id=args.tts_model), args.device)
     report, rows = run_tts(texts, synth, args.out / f"tts-{_short(args.tts_model)}-{stamp}")
-    return {"nom": f"zero-shot {_short(args.tts_model)}", "maillon": "tts",
-            "corpus": corpus, "composition": {"n": len(rows)},
+    return {"nom": args.label or _short(args.tts_model), "architecture": "synthèse",
+            "maillon": "tts", "corpus": corpus, "composition": {"n": len(rows)},
             "modeles": {"tts": args.tts_model}, **report}, rows
 
 
@@ -270,6 +309,8 @@ def main(argv: list[str] | None = None) -> None:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", type=Path, default=Path("eval/results"))
     p.add_argument("--device", default=None, help="cpu, cuda... (défaut : cuda si disponible)")
+    p.add_argument("--label", default=None,
+                   help="nom de la colonne dans le tableau comparatif")
     sub = p.add_subparsers(dest="maillon", required=True)
 
     def corpus_args(sp, default_dataset, default_limit):
@@ -281,20 +322,25 @@ def main(argv: list[str] | None = None) -> None:
         sp.add_argument("--bm-column", default=None)
         sp.add_argument("--fr-column", default=None)
 
-    sp = sub.add_parser("asr", help="WER/CER, et propagation vers la MT avec --with-mt")
+    sp = sub.add_parser("asr", help="entrée de la chaîne : cascade ou bout-en-bout")
     corpus_args(sp, JELI_ASR, 300)
     sp.add_argument("--model", default="openai/whisper-small")
     sp.add_argument("--kind", choices=["whisper", "ctc"], default="whisper")
+    sp.add_argument("--task", choices=["transcribe", "translate"], default="transcribe",
+                    help="translate : bout-en-bout, Whisper produit le français")
     sp.add_argument("--language", default="sw",
                     help="token de langue Whisper ('none' : détection automatique)")
     sp.add_argument("--target-lang", default=None, help="adaptateur MMS, ex. bam")
-    sp.add_argument("--with-mt", action="store_true")
+    sp.add_argument("--with-mt", action="store_true",
+                    help="cascade complète jusqu'au français, et propagation d'erreurs")
     sp.add_argument("--mt-model", default=MTConfig().model_id)
     sp.set_defaults(func=cmd_asr)
 
     sp = sub.add_parser("mt", help="chrF++/BLEU bm->fr et fr->bm")
     corpus_args(sp, BAYELEMABAGA, 500)
     sp.add_argument("--mt-model", default=MTConfig().model_id)
+    sp.add_argument("--bm2fr-model", default=None, help="défaut : --mt-model")
+    sp.add_argument("--fr2bm-model", default=None, help="défaut : --mt-model")
     sp.set_defaults(func=cmd_mt)
 
     sp = sub.add_parser("tts", help="échantillon audio + grille MOS")
@@ -311,9 +357,9 @@ def main(argv: list[str] | None = None) -> None:
 
     report, rows = args.func(args)
     report = {"date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-              "architecture": "zero-shot", **report,
-              "environnement": _environment(args.device)}
-    path = write_report(report, rows, args.out, f"zero-shot-{args.maillon}")
+              **report, "environnement": _environment(args.device)}
+    prefix = f"asr-{report['architecture']}" if args.maillon == "asr" else args.maillon
+    path = write_report(report, rows, args.out, prefix)
     print(json.dumps({k: v for k, v in report.items() if k != "corpus"},
                      ensure_ascii=False, indent=2))
     print(f"\nRapport : {path}")
