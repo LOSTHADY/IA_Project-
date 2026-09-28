@@ -59,6 +59,23 @@ python app/gradio_app.py
 Pour itérer sur le pipeline sans charger de LLM :
 `--llm-backend echo` renvoie une réponse bouchon déterministe.
 
+## Collecte du jeu de test
+
+```bash
+python app/collect_app.py                  # enregistrer, transcrire, valider
+python scripts/export_testset.py           # énoncés validés -> testset.jsonl
+```
+
+L'application suit une séance dans l'ordre :
+1. consentement et pseudonyme du locuteur ;
+2. consignes de parole spontanée et phrases à lire ;
+3. contrôle audio immédiat ;
+4. transcription avec clavier ɛ/ɔ/ɲ/ŋ, puis validation par une seconde
+   personne ;
+5. suivi de la composition face aux cibles.
+
+Protocole et formulaire de consentement : [`docs/COLLECTE.md`](docs/COLLECTE.md).
+
 ## Évaluation
 
 ```bash
@@ -103,10 +120,11 @@ bambara_voice/     pipeline d'inférence
   pipeline.py      orchestration + trace chronométrée de chaque tour
 eval/              métriques, jeu de test, rapports comparatifs
 scripts/           fine-tuning Colab, préparation du jeu de test
-app/               démo Gradio
+app/               démo Gradio, application de collecte
 docs/METHODE.md    partis pris méthodologiques
+docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 data/templates.json  banque de gabarits (à remplir)
-data/testset/      jeu de test (à collecter — chemin critique)
+data/testset/      jeu de test (à collecter — chemin critique), consignes
 ```
 
 ## État
@@ -115,14 +133,14 @@ data/testset/      jeu de test (à collecter — chemin critique)
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
 | 1 | Références zero-shot | à faire |
-| 2 | **Jeu de test, 200–500 énoncés** | à faire — chemin critique |
+| 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
 | 3 | Fine-tuning Whisper + NLLB | à faire |
 | 4 | Comparaison des deux architectures | à faire |
 | 5 | Assemblage CPU, quantisation, démo | à faire |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
-défendable. Voir [`data/testset/README.md`](data/testset/README.md) pour le
-format, la composition à viser et les questions de consentement et de licence.
+défendable. Voir [`docs/COLLECTE.md`](docs/COLLECTE.md) pour le protocole et
+[`data/testset/README.md`](data/testset/README.md) pour le format.
 
 ## Tests
 
@@ -131,7 +149,7 @@ python -m pytest tests/ -q
 ```
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,
-métriques) sans charger de modèle. Les composants à modèles se vérifient avec
+métriques, collecte) sans charger de modèle. Les composants à modèles se vérifient avec
 `python -m bambara_voice.cli check`.
 
 ## Licence

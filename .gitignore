@@ -21,6 +21,15 @@ checkpoints/
 runs/
 wandb/
 
+# Collecte du jeu de test : le dépôt est public, et rien ne sort sans l'accord
+# des locuteurs (cf. docs/COLLECTE.md). Seul l'exemple est versionné.
+data/testset/audio/
+data/testset/locuteurs.jsonl
+data/testset/collecte.jsonl
+data/testset/testset*.jsonl
+!data/testset/testset.example.jsonl
+*.jsonl.tmp
+
 # Sorties d'évaluation (régénérables)
 eval/results/
 outputs/
