@@ -2,11 +2,12 @@
 
 Deux partis pris méthodologiques, à reprendre tels quels dans le mémoire :
 
-1. **WER strict vs WER relâché.** Le relâché est calculé sur la forme repliée
-   (ɛ→e, ɔ→o, ɲ→ny, ŋ→ng, sans ponctuation). L'écart entre les deux mesure la
-   part d'erreur imputable à la seule variation orthographique — sans ça, un
-   modèle qui écrit un bambara correct mais en ASCII paraît bien pire qu'il
-   n'est.
+1. **WER strict vs WER relâché.** Les deux ignorent casse et ponctuation,
+   comme dans la littérature. Le strict garde l'orthographe ; le relâché est
+   calculé sur la forme repliée (ɛ→e, ɔ→o, ɲ→ny, ŋ→ng, sans apostrophes).
+   L'écart entre les deux mesure donc la part d'erreur imputable à la seule
+   variation orthographique — sans ça, un modèle qui écrit un bambara correct
+   mais en ASCII paraît bien pire qu'il n'est.
 
 2. **chrF++ plutôt que BLEU** comme métrique principale de traduction. BLEU
    est peu fiable sur langue morphologiquement riche et faible ressource ;
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
-from bambara_voice.normalize import fold, normalize
+from bambara_voice.normalize import fold, normalize, strip_punctuation
 
 
 @dataclass
@@ -61,8 +62,8 @@ def score_asr(hypotheses: list[str], references: list[str]) -> ASRScores:
     if not hypotheses:
         raise ValueError("corpus vide")
 
-    strict_h = [normalize(h) for h in hypotheses]
-    strict_r = [normalize(r) for r in references]
+    strict_h = [strip_punctuation(normalize(h)) for h in hypotheses]
+    strict_r = [strip_punctuation(normalize(r)) for r in references]
     fold_h = [fold(h) for h in hypotheses]
     fold_r = [fold(r) for r in references]
 

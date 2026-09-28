@@ -20,6 +20,16 @@ from bambara_voice.config import cascade_config, e2e_config  # noqa: E402
 from bambara_voice.pipeline import VoicePipeline  # noqa: E402
 
 
+def _messages_format(gr) -> dict:
+    """Gradio 4-5 attend type="messages" ; Gradio 6 a retiré le paramètre,
+    ce format y étant le seul."""
+    import inspect
+
+    if "type" in inspect.signature(gr.Chatbot.__init__).parameters:
+        return {"type": "messages"}
+    return {}
+
+
 def build_interface(pipeline: VoicePipeline):
     import gradio as gr
 
@@ -39,7 +49,9 @@ def build_interface(pipeline: VoicePipeline):
             out_path = str(Path(gr.utils.abspath(".")) / "reponse.wav")
             speech.save(out_path)
 
-        details = "\n".join([
+        # Deux espaces en fin de ligne : saut de ligne Markdown, sans quoi
+        # tout le panneau s'affiche en un seul paragraphe.
+        details = "  \n".join([
             f"**Architecture** : {trace.architecture}",
             f"**Entendu (bm)** : {trace.source_bm or '—'}",
             f"**Compris (fr)** : {trace.source_fr}",
@@ -48,8 +60,7 @@ def build_interface(pipeline: VoicePipeline):
             f"**Source** : {trace.reply_source}"
             + (f" ({trace.template_id}, score {trace.template_score})"
                if trace.template_id else ""),
-            "",
-            "**Temps par étape (s)**",
+            "\n**Temps par étape (s)**\n",
             *[f"- {k} : {v:.2f}" for k, v in trace.timings.items()],
             f"- **total** : {trace.total_seconds:.2f} (RTF {trace.rtf:.2f})",
         ])
@@ -63,7 +74,7 @@ def build_interface(pipeline: VoicePipeline):
         )
         with gr.Row():
             with gr.Column(scale=3):
-                chat = gr.Chatbot(label="Conversation", type="messages", height=380)
+                chat = gr.Chatbot(label="Conversation", height=380, **_messages_format(gr))
                 mic = gr.Audio(sources=["microphone", "upload"], type="filepath",
                                label="Appuyez pour parler")
                 player = gr.Audio(label="Réponse audio", autoplay=True)
