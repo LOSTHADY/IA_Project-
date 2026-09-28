@@ -209,11 +209,14 @@ défendable. Voir [`docs/COLLECTE.md`](docs/COLLECTE.md) pour le protocole et
 ## Tests
 
 ```bash
-python -m pytest tests/ -q
+for f in tests/test_*.py; do python -m pytest "$f" -q; done
 ```
 
-Lancés automatiquement à chaque push par GitHub Actions
-([`tests.yml`](.github/workflows/tests.yml)).
+Un processus par module : lancée d'un bloc (`pytest tests/`), la suite
+plante par intermittence sur une corruption du tas native, toujours pendant
+l'utilisation de CTranslate2, et jamais module par module. La cause n'est
+pas identifiée. Les tests sont lancés automatiquement à chaque push par
+GitHub Actions ([`tests.yml`](.github/workflows/tests.yml)).
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,
 métriques, collecte, corpus) sans rien télécharger. Les parties à modèles

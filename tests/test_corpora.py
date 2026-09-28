@@ -121,6 +121,52 @@ def test_load_split_repli_parquet_pour_les_jeux_a_script(monkeypatch):
     assert calls == [None, "refs/convert/parquet"]
 
 
+class _Http429(Exception):
+    """Imite huggingface_hub.errors.HfHubHTTPError sur une réponse 429."""
+
+    class response:
+        status_code = 429
+
+
+def test_limite_de_debit_du_hub_reessaye_puis_reussit(monkeypatch):
+    from eval import corpora
+
+    calls, waits = [], []
+
+    def fake_load(path, config=None, split=None, revision=None):
+        calls.append(path)
+        if len(calls) < 3:
+            raise _Http429("429 Too Many Requests: maximum queue size reached")
+        return "ok"
+
+    monkeypatch.setattr(datasets, "load_dataset", fake_load)
+    monkeypatch.setattr(corpora.time, "sleep", waits.append)
+    assert load_split("RobotsMali/jeli-asr", split="test") == "ok"
+    assert len(calls) == 3 and len(waits) == 2 and waits[1] > waits[0] >= 30
+
+
+def test_limite_de_debit_abandon_apres_plusieurs_essais():
+    from eval.corpora import with_retries
+
+    def always_429():
+        raise _Http429("429 Too Many Requests")
+
+    waits = []
+    with pytest.raises(_Http429):
+        with_retries(always_429, "essai", attempts=3, sleep=waits.append)
+    assert len(waits) == 2
+
+
+def test_une_autre_erreur_n_est_pas_reessayee():
+    from eval.corpora import with_retries
+
+    waits = []
+    with pytest.raises(ValueError):
+        with_retries(lambda: (_ for _ in ()).throw(ValueError("colonne")), "essai",
+                     sleep=waits.append)
+    assert waits == []
+
+
 def test_iter_examples_audio_et_texte(tmp_path):
     ds = load_split(str(_jeli_like(tmp_path)))
     cols = detect_columns(ds.features, need_audio=True)

@@ -31,5 +31,18 @@ jobs:
       - name: Analyse statique
         run: python -m pyflakes bambara_voice eval scripts app tests
 
-      - name: Tests
-        run: python -m pytest tests/ -q
+      # Un processus par module. Lancée d'un bloc, la suite plante par
+      # intermittence sur une corruption du tas native (« malloc(): unaligned
+      # tcache chunk detected »), toujours pendant l'utilisation de
+      # CTranslate2 dans test_deploiement, et jamais quand chaque module
+      # tourne seul. Cause non identifiée (interaction entre bibliothèques
+      # natives dans un même processus). Tous les tests s'exécutent.
+      - name: Tests (un processus par module)
+        run: |
+          status=0
+          for f in tests/test_*.py; do
+            echo "::group::$f"
+            python -m pytest "$f" -q || status=1
+            echo "::endgroup::"
+          done
+          exit $status

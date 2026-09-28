@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import io
 import logging
+import random
+import time
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Callable, Iterator, TypeVar
 
 import numpy as np
 
@@ -91,6 +93,38 @@ def detect_columns(features, bm: str | None = None, fr: str | None = None,
     return Columns(bm=bm_col, fr=fr_col, audio=audio, nested=nested)
 
 
+T = TypeVar("T")
+
+
+def _rate_limited(exc: BaseException) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status == 429 or "429" in str(exc) or "Too Many Requests" in str(exc)
+
+
+def with_retries(fn: Callable[[], T], what: str, attempts: int = 6,
+                 base_delay: float = 30.0, sleep: Callable[[float], None] | None = None) -> T:
+    """Réessaie quand le Hub limite le débit (HTTP 429).
+
+    Sans jeton, plusieurs tâches qui listent le même gros dépôt au même
+    moment (les mesures parallèles de la CI) se font refuser. Attente
+    exponentielle, avec une part aléatoire pour que les tâches ne
+    réessaient pas toutes ensemble ; toute autre erreur remonte aussitôt.
+    """
+    sleep = sleep or time.sleep  # résolu à l'appel : remplaçable dans les tests
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            if not _rate_limited(exc) or attempt == attempts - 1:
+                raise
+            delay = base_delay * 2 ** attempt * (1 + random.random() / 2)
+            logger.warning("%s : Hugging Face limite le débit (429), nouvel essai dans %.0f s "
+                           "(%d/%d). Un jeton HF_TOKEN relève cette limite.",
+                           what, delay, attempt + 1, attempts - 1)
+            sleep(delay)
+    raise AssertionError("inatteignable")
+
+
 def load_split(dataset_id: str, split: str | None = None, config: str | None = None,
                revision: str | None = None):
     """Charge une partition d'évaluation, avec deux replis :
@@ -103,7 +137,9 @@ def load_split(dataset_id: str, split: str | None = None, config: str | None = N
 
     if split is None:
         try:
-            names = get_dataset_split_names(dataset_id, config, revision=revision)
+            names = with_retries(
+                lambda: get_dataset_split_names(dataset_id, config, revision=revision),
+                f"{dataset_id} (partitions)")
         except Exception as exc:  # noqa: BLE001 - on retombe sur "test"
             logger.debug("partitions non listables (%s)", exc)
             names = []
@@ -118,14 +154,16 @@ def load_any(dataset_id: str, config: str | None = None, **kwargs):
     from datasets import load_dataset
 
     try:
-        return load_dataset(dataset_id, config, **kwargs)
+        return with_retries(lambda: load_dataset(dataset_id, config, **kwargs), dataset_id)
     except Exception as exc:
         msg = str(exc).lower()
         if kwargs.get("revision") is None and "script" in msg:
             logger.warning("%s : script de chargement non supporté, "
                            "repli sur la conversion parquet du Hub", dataset_id)
-            return load_dataset(dataset_id, config,
-                                **{**kwargs, "revision": "refs/convert/parquet"})
+            return with_retries(
+                lambda: load_dataset(dataset_id, config,
+                                     **{**kwargs, "revision": "refs/convert/parquet"}),
+                dataset_id)
         if "config" in msg and config is None:
             raise ValueError(f"{dataset_id} a plusieurs sous-ensembles : préciser --config. "
                              f"Détail : {exc}") from exc
