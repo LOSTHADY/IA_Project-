@@ -136,6 +136,15 @@ l'autre :
   même partition, même graine (`eval.baselines`). Chaque rapport consigne
   ces paramètres ainsi que les versions des bibliothèques.
 
+**Significativité.** Aucun écart n'est annoncé sans son intervalle de
+confiance. `eval.significance` rééchantillonne les énoncés (bootstrap, 1 000
+tirages) et recalcule chaque score au niveau du corpus. Pour deux systèmes,
+le test est apparié : les mêmes tirages servent aux deux, ce que permet
+la règle précédente (Koehn, 2004). Un écart dont l'IC contient zéro n'est
+pas établi, quelle que soit sa taille apparente. Pour la synthèse, le MOS
+(`eval.mos`) a lui aussi son IC, par bootstrap sur les phrases, car les
+notes d'une même phrase ne sont pas indépendantes.
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source
@@ -172,6 +181,8 @@ avancer en parallèle ; elle, non.
   <https://aclanthology.org/2026.africanlp-main.26.pdf>
 - Jeli-ASR (RobotsMali) — <https://huggingface.co/datasets/RobotsMali/jeli-asr>
 - Bayelemabaga (RobotsMaliAI) — <https://huggingface.co/datasets/RobotsMaliAI/bayelemabaga>
+- Koehn, P. — *Statistical Significance Tests for Machine Translation
+  Evaluation* — EMNLP 2004 — <https://aclanthology.org/W04-3250/>
 - Kunnafonidilaw ka Cadeau, ASR dataset de bambara contemporain —
   <https://arxiv.org/html/2512.19400>
 - Manding Language Tech Resources (An ka taa) —

@@ -227,3 +227,14 @@ def test_chaine_complete_sur_cpu(cpu):
 
     e2e = evaluate(testset, "e2e", cpu / "res", config_path=config)
     assert set(e2e["latence"]["par_etape_s"]) == {"asr", "llm", "mt_out"}
+
+    # Les rapports de run_eval se prêtent au test apparié.
+    from eval.significance import bootstrap, load_series
+
+    [c_path] = (cpu / "res").glob("cascade-*[0-9].json")
+    [e_path] = (cpu / "res").glob("e2e-*[0-9].json")
+    _, c_series = load_series(c_path)
+    _, e_series = load_series(e_path)
+    assert {"WER strict", "chrF++ (depuis ASR)"} <= set(c_series)
+    res = bootstrap([c_series["chrF++ (depuis ASR)"], e_series["chrF++ (depuis ASR)"]], n_boot=20)
+    assert res["n"] == 3

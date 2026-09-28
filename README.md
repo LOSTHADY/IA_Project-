@@ -105,6 +105,13 @@ Le rapport produit : WER/CER strict **et relâché**, chrF++/BLEU, propagation
 d'erreurs entre l'ASR et le reste de la chaîne, latence par étape, RTF, et
 taux de couverture des gabarits.
 
+```bash
+# Un écart est-il réel ? IC à 95 % et test apparié (bootstrap)
+python -m eval.significance eval/results/*.json --noms "cascade" "bout-en-bout"
+# MOS de la synthèse, à partir des grilles remplies par les auditeurs
+python -m eval.mos eval/results/tts-*/mos*.csv
+```
+
 L'écart entre WER strict et WER relâché mesure la part d'erreur imputable à la
 seule variation orthographique (ɛ/ɔ/ɲ/ŋ contre approximations ASCII) — sans
 cette distinction, un modèle produisant un bambara correct mais en ASCII

@@ -119,3 +119,14 @@ def test_evaluation_cascade_contre_bout_en_bout(work, whisper_ft, nllb_ft):
     table = to_markdown([by_arch["cascade"], by_arch["e2e"]])
     [row] = [line for line in table.splitlines() if line.startswith("| chrF++ (depuis ASR)")]
     assert "—" not in row  # les deux architectures sur la même mesure
+
+
+def test_significativite_sur_les_rapports_d_eval_baselines(work, capsys):
+    """Le test apparié lit les sorties ligne à ligne de vrais rapports."""
+    from eval import significance
+
+    reports = [str(p) for p in sorted((work["root"] / "results").glob("asr-*[0-9].json"))]
+    significance.main(reports + ["--noms", "cascade", "bout-en-bout", "--n-boot", "50"])
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "| Métrique | n | cascade | bout-en-bout |"
+    assert "| chrF++ (depuis ASR) | 6 |" in out and "écart" in out
