@@ -1,0 +1,35 @@
+# Tests à chaque push : logique déterministe, collecte, corpus, et chaîne
+# complète (fine-tuning, évaluation, déploiement CPU) sur des modèles
+# minuscules construits localement. Rien n'est téléchargé depuis le Hub.
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU, plus léger que la version CUDA)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt accelerate ctranslate2 pytest pyflakes
+
+      - name: Analyse statique
+        run: python -m pyflakes bambara_voice eval scripts app tests
+
+      - name: Tests
+        run: python -m pytest tests/ -q

@@ -86,6 +86,13 @@ traduction dans les deux sens, MMS-TTS avec une grille MOS. Le notebook
 [`notebooks/phase1_zero_shot.ipynb`](notebooks/phase1_zero_shot.ipynb)
 enchaîne tout sur un GPU Colab, en environ 30 minutes.
 
+Sans GPU ni rien à surveiller : le workflow GitHub Actions
+[« Phase 1 — références zero-shot »](.github/workflows/phase1-zero-shot.yml)
+fait les mêmes mesures sur les processeurs de GitHub, gratuitement pour un
+dépôt public. Il faut compter quelques heures. Le tableau et les
+intervalles de confiance s'affichent dans le résumé de l'exécution ; les
+rapports et les audios à noter sont dans les artefacts.
+
 ```bash
 python -m eval.baselines asr --model facebook/mms-1b-all --kind ctc --target-lang bam --with-mt
 python -m eval.baselines mt --dataset RobotsMaliAI/bayelemabaga
@@ -204,6 +211,9 @@ défendable. Voir [`docs/COLLECTE.md`](docs/COLLECTE.md) pour le protocole et
 ```bash
 python -m pytest tests/ -q
 ```
+
+Lancés automatiquement à chaque push par GitHub Actions
+([`tests.yml`](.github/workflows/tests.yml)).
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,
 métriques, collecte, corpus) sans rien télécharger. Les parties à modèles
