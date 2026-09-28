@@ -13,6 +13,12 @@
     python -m eval.baselines --label "bout-en-bout" asr --model ckpt/whisper-bm \\
         --task translate
 
+    # Phase 5 — mêmes modèles convertis pour le CPU (scripts/export_cpu.py) :
+    # ce que la quantification int8 coûte en qualité, et la latence réelle
+    python -m eval.baselines --device cpu --label "cascade int8" asr \\
+        --model modeles-cpu/whisper-bm --with-mt --mt-model modeles-cpu/nllb-bm2fr \\
+        --backend ctranslate2
+
     python -m eval.compare eval/results/*.json
 
 Même corpus, même partition, même graine : les chiffres de chaque phase se
@@ -221,6 +227,16 @@ def _short(model_id: str) -> str:
     return model_id.rstrip("/").split("/")[-1]
 
 
+def _backend_suffix(args) -> str:
+    return f" [ct2 {args.compute_type}]" if args.backend == "ctranslate2" else ""
+
+
+def _engine_args(sp) -> None:
+    sp.add_argument("--backend", choices=["transformers", "ctranslate2"], default="transformers",
+                    help="ctranslate2 : modèles convertis par scripts/export_cpu.py")
+    sp.add_argument("--compute-type", default="int8", help="ctranslate2 : int8, float32...")
+
+
 # --- ligne de commande --------------------------------------------------------
 
 def _load(args, need_audio: bool, need_fr: bool):
@@ -246,22 +262,28 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
     ds, cols, idx, corpus = _load(args, need_audio=True, need_fr=e2e)
     language = None if args.language == "none" else args.language
     asr_cfg = ASRConfig(model_id=args.model, task=args.task, kind=args.kind,
-                        language=language, target_lang=args.target_lang)
+                        language=language, target_lang=args.target_lang,
+                        backend=args.backend, compute_type=args.compute_type)
     recognizer = SpeechRecognizer(asr_cfg, args.device)
     translator = None
     if args.with_mt:
-        translator = Translator(MTConfig(model_id=args.mt_model, src_lang=BAM, tgt_lang=FRA),
-                                args.device)
+        translator = Translator(MTConfig(model_id=args.mt_model, src_lang=BAM, tgt_lang=FRA,
+                                         backend=args.backend,
+                                         compute_type=args.compute_type), args.device)
     report, rows = run_asr(iter_examples(ds, cols, idx), recognizer, translator, e2e=e2e)
 
     name = _short(args.model)
     if args.kind == "whisper" and language != "sw":
         name += f" ({language or 'auto'})"
     name += " → fr" if e2e else (f" + {_short(args.mt_model)}" if args.with_mt else "")
+    name += _backend_suffix(args)
     n = report["mt_in_depuis_asr" if e2e else "asr"]["n"]
     return {"nom": args.label or name, "architecture": "e2e" if e2e else "cascade",
             "maillon": "asr", "corpus": corpus, "composition": {"n": n},
             "modeles": {"asr": args.model, "kind": args.kind, "task": args.task,
+                        "backend": args.backend,
+                        **({"compute_type": args.compute_type}
+                           if args.backend == "ctranslate2" else {}),
                         "language": language, "target_lang": args.target_lang,
                         **({"mt_in": args.mt_model} if args.with_mt else {})},
             **report}, rows
@@ -275,15 +297,20 @@ def cmd_mt(args) -> tuple[dict, list[dict]]:
     # même NLLB pour les deux en zero-shot.
     bm2fr_id = args.bm2fr_model or args.mt_model
     fr2bm_id = args.fr2bm_model or args.mt_model
-    bm2fr = Translator(MTConfig(model_id=bm2fr_id, src_lang=BAM, tgt_lang=FRA), args.device)
-    fr2bm = Translator(MTConfig(model_id=fr2bm_id, src_lang=FRA, tgt_lang=BAM), args.device)
+    engine = {"backend": args.backend, "compute_type": args.compute_type}
+    bm2fr = Translator(MTConfig(model_id=bm2fr_id, src_lang=BAM, tgt_lang=FRA, **engine),
+                       args.device)
+    fr2bm = Translator(MTConfig(model_id=fr2bm_id, src_lang=FRA, tgt_lang=BAM, **engine),
+                       args.device)
     report, rows = run_mt(iter_examples(ds, cols, idx, with_audio=False), bm2fr, fr2bm)
     models = _short(bm2fr_id) if bm2fr_id == fr2bm_id else \
         f"{_short(bm2fr_id)} + {_short(fr2bm_id)}"
-    return {"nom": args.label or f"{models} / {_short(args.dataset)}",
+    return {"nom": args.label or f"{models} / {_short(args.dataset)}{_backend_suffix(args)}",
             "architecture": "traduction", "maillon": "mt", "corpus": corpus,
             "composition": {"n": report["mt_bm_fr"]["n"]},
-            "modeles": {"mt_bm_fr": bm2fr_id, "mt_fr_bm": fr2bm_id}, **report}, rows
+            "modeles": {"mt_bm_fr": bm2fr_id, "mt_fr_bm": fr2bm_id, "backend": args.backend,
+                        **({"compute_type": args.compute_type}
+                           if args.backend == "ctranslate2" else {})}, **report}, rows
 
 
 def cmd_tts(args) -> tuple[dict, list[dict]]:
@@ -334,6 +361,7 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--with-mt", action="store_true",
                     help="cascade complète jusqu'au français, et propagation d'erreurs")
     sp.add_argument("--mt-model", default=MTConfig().model_id)
+    _engine_args(sp)
     sp.set_defaults(func=cmd_asr)
 
     sp = sub.add_parser("mt", help="chrF++/BLEU bm->fr et fr->bm")
@@ -341,6 +369,7 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--mt-model", default=MTConfig().model_id)
     sp.add_argument("--bm2fr-model", default=None, help="défaut : --mt-model")
     sp.add_argument("--fr2bm-model", default=None, help="défaut : --mt-model")
+    _engine_args(sp)
     sp.set_defaults(func=cmd_mt)
 
     sp = sub.add_parser("tts", help="échantillon audio + grille MOS")

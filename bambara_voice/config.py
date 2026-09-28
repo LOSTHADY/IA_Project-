@@ -7,7 +7,7 @@ changer de modèle ne doit jamais demander de toucher à la logique.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields, replace
 from pathlib import Path
 from typing import Literal
 
@@ -47,6 +47,10 @@ class ASRConfig:
     max_new_tokens: int = 200
     kind: Literal["whisper", "ctc"] = "whisper"
     target_lang: str | None = None  # adaptateur de langue MMS, ex. "bam"
+    # "ctranslate2" : modèle converti par scripts/export_cpu.py (int8 sur CPU,
+    # cf. docs/DEPLOIEMENT.md pour les gains mesurés). Whisper uniquement.
+    backend: Literal["transformers", "ctranslate2"] = "transformers"
+    compute_type: str = "int8"  # ctranslate2 : int8, int8_float32, float32...
 
 
 @dataclass
@@ -58,6 +62,8 @@ class MTConfig:
     tgt_lang: str = FRA
     beam_size: int = 4
     max_new_tokens: int = 256
+    backend: Literal["transformers", "ctranslate2"] = "transformers"
+    compute_type: str = "int8"
 
 
 @dataclass
@@ -146,3 +152,75 @@ def cascade_config(**overrides) -> PipelineConfig:
 def e2e_config(**overrides) -> PipelineConfig:
     """Variante B : traduction vocale directe bm->fr (un maillon en moins)."""
     return PipelineConfig(name="e2e", architecture="e2e", **overrides)
+
+
+def build_config(architecture: str = "cascade", path: str | Path | None = None) -> PipelineConfig:
+    """Point d'entrée commun de la CLI, de la démo et de l'évaluation : les
+    valeurs par défaut, ou un fichier de déploiement (`load_config`)."""
+    if path:
+        return load_config(path, architecture)
+    return e2e_config() if architecture == "e2e" else cascade_config()
+
+
+def split_device(device: str) -> tuple[str, int]:
+    """"cuda:1" -> ("cuda", 1) : la forme qu'attend CTranslate2."""
+    name, _, index = device.partition(":")
+    return name, int(index or 0)
+
+
+# Champs contenant un chemin : relatifs au fichier de configuration s'ils y
+# existent, sinon laissés tels quels (identifiant du Hub).
+_PATH_FIELDS = ("model_id", "gguf_path", "path")
+
+
+def load_config(path: str | Path, architecture: str = "cascade") -> PipelineConfig:
+    """Configuration de déploiement lue depuis un fichier JSON.
+
+    Le fichier ne donne que ce qui change par rapport aux valeurs par défaut,
+    section par section, et sert aux deux architectures :
+
+        {"asr": {"model_id": "modeles-cpu/whisper-small-bm",
+                 "backend": "ctranslate2"},
+         "mt_out": {"model_id": "modeles-cpu/nllb-fr2bm", "backend": "ctranslate2"},
+         "llm": {"backend": "llamacpp", "gguf_path": "modeles-cpu/llm.gguf"}}
+
+    Une faute de frappe dans un nom de section ou de champ est une erreur, pas
+    un réglage silencieusement ignoré.
+    """
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    base_dir = path.resolve().parent
+    defaults = PipelineConfig()
+    sections = ("asr", "mt_in", "mt_out", "llm", "tts", "templates")
+
+    unknown = set(data) - set(sections) - {"device", "_comment"}
+    if unknown:
+        raise ValueError(f"{path} : sections inconnues {sorted(unknown)} ; "
+                         f"attendues : {list(sections)} et device")
+
+    overrides: dict = {}
+    for key in sections:
+        if key not in data:
+            continue
+        current = getattr(defaults, key)
+        valid = {f.name for f in fields(current)}
+        bad = set(data[key]) - valid
+        if bad:
+            raise ValueError(f"{path} : champs inconnus dans '{key}' : {sorted(bad)} ; "
+                             f"valides : {sorted(valid)}")
+        values = dict(data[key])
+        for name in _PATH_FIELDS:
+            value = values.get(name)
+            if isinstance(value, str) and not Path(value).is_absolute() \
+                    and (base_dir / value).exists():
+                values[name] = str(base_dir / value)
+        if key == "templates" and "path" in values:
+            values["path"] = Path(values["path"])
+        # replace() garde les valeurs propres au rôle (sens de traduction de
+        # mt_in et mt_out) que le fichier ne précise pas.
+        overrides[key] = replace(current, **values)
+    if "device" in data:
+        overrides["device"] = data["device"]
+
+    build = e2e_config if architecture == "e2e" else cascade_config
+    return build(**overrides)

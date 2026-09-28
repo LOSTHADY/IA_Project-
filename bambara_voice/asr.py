@@ -8,6 +8,11 @@ la base de la comparaison cascade / bout-en-bout.
 Les modèles CTC (wav2vec2, MMS) sont aussi pris en charge, en transcription
 seule : `facebook/mms-1b-all` couvre le bambara sans fine-tuning et fournit la
 référence zero-shot la plus sérieuse côté ASR.
+
+Pour le déploiement CPU, un Whisper converti par `scripts/export_cpu.py`
+tourne sous CTranslate2 (`backend="ctranslate2"`, int8) : même modèle, mêmes
+tokens de langue et de tâche, 4 fois plus léger. Le décodage va environ deux
+fois plus vite, pas l'encodeur (cf. docs/DEPLOIEMENT.md).
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import ASRConfig
+from .config import ASRConfig, split_device
 from .normalize import normalize
 
 logger = logging.getLogger(__name__)
@@ -53,10 +58,28 @@ class SpeechRecognizer:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        if self.config.kind == "ctc":
+        if self.config.backend == "ctranslate2":
+            if self.config.kind != "whisper":
+                raise ValueError("backend ctranslate2 : Whisper uniquement")
+            self._load_ct2()
+        elif self.config.kind == "ctc":
             self._load_ctc()
         else:
             self._load_whisper()
+
+    def _load_ct2(self) -> None:
+        import ctranslate2
+        from transformers import AutoProcessor
+
+        cfg = self.config
+        logger.info("Chargement ASR CTranslate2 %s (%s) sur %s",
+                    cfg.model_id, cfg.compute_type, self.device)
+        # Le dossier converti contient aussi extracteur et tokenizer.
+        self._processor = AutoProcessor.from_pretrained(cfg.model_id)
+        device, index = split_device(self.device)
+        self._model = ctranslate2.models.Whisper(
+            cfg.model_id, device=device, device_index=index, compute_type=cfg.compute_type
+        )
 
     def _load_whisper(self) -> None:
         import torch
@@ -97,14 +120,13 @@ class SpeechRecognizer:
         if isinstance(audio, (str, Path)):
             audio = load_audio(audio, cfg.sample_rate)
 
-        inputs = self._processor(
-            audio, sampling_rate=cfg.sample_rate, return_tensors="pt"
-        ).to(self.device)
-
-        if cfg.kind == "ctc":
-            text = self._decode_ctc(inputs)
+        if cfg.backend == "ctranslate2":
+            text = self._decode_ct2(audio)
         else:
-            text = self._decode_whisper(inputs)
+            inputs = self._processor(
+                audio, sampling_rate=cfg.sample_rate, return_tensors="pt"
+            ).to(self.device)
+            text = self._decode_ctc(inputs) if cfg.kind == "ctc" else self._decode_whisper(inputs)
 
         out_lang = "fr" if cfg.task == "translate" else "bm"
         # On ne normalise en bambara que si la sortie est bien du bambara.
@@ -129,47 +151,81 @@ class SpeechRecognizer:
         import torch
 
         cfg = self.config
-        gen_kwargs: dict = {
-            "max_new_tokens": cfg.max_new_tokens,
-            "num_beams": cfg.beam_size,
-            "task": cfg.task,
-        }
-        if cfg.language:
-            gen_kwargs["language"] = cfg.language
-
-        missing = self._missing_prompt_tokens()
-        if missing:
-            # Jamais de repli en traduction : sans tâche forcée, Whisper
-            # transcrirait, et la variante e2e mesurerait silencieusement
-            # autre chose.
-            if cfg.task == "translate":
-                raise ValueError(f"{cfg.model_id} ne connaît pas {missing} : "
-                                 f"traduction directe impossible")
-            logger.warning("%s ne connaît pas %s : génération sans langue ni tâche imposées",
-                           cfg.model_id, missing)
-            gen_kwargs.pop("task")
-            gen_kwargs.pop("language", None)
-
+        gen_kwargs: dict = {"max_new_tokens": cfg.max_new_tokens, "num_beams": cfg.beam_size}
+        if self._prompt_is_forceable():
+            gen_kwargs["task"] = cfg.task
+            if cfg.language:
+                gen_kwargs["language"] = cfg.language
         with torch.no_grad():
             ids = self._model.generate(**inputs, **gen_kwargs)
         return self._processor.batch_decode(ids, skip_special_tokens=True)[0]
 
-    def _missing_prompt_tokens(self) -> list[str]:
-        """Tokens de langue/tâche demandés mais absents du modèle.
+    def _decode_ct2(self, audio: np.ndarray) -> str:
+        import ctranslate2
+
+        cfg = self.config
+        feats = self._processor(audio, sampling_rate=cfg.sample_rate,
+                                return_tensors="np").input_features
+        feats = ctranslate2.StorageView.from_array(feats.astype(np.float32))
+        tok = self._processor.tokenizer
+
+        # Même préfixe que transformers : <|startoftranscript|><|langue|><|tâche|>.
+        prompt = ["<|startoftranscript|>"]
+        if self._prompt_is_forceable():
+            if cfg.language:
+                prompt.append(self._lang_token())
+            else:
+                # Détection automatique, comme transformers sans langue imposée.
+                prompt.append(self._model.detect_language(feats)[0][0][0])
+            prompt.append(f"<|{cfg.task}|>")
+        prompt.append("<|notimestamps|>")
+        ids = tok.convert_tokens_to_ids(prompt)
+
+        # CTranslate2 génère au plus max_length // 2 tokens, quel que soit le
+        # préfixe (mesuré : 40 -> 20, 448 -> 224 ; convention sample_len de
+        # Whisper). Le double donne le même plafond que max_new_tokens côté
+        # transformers, dans la limite du contexte du décodeur.
+        res = self._model.generate(feats, [ids], beam_size=cfg.beam_size,
+                                   max_length=min(448, 2 * cfg.max_new_tokens))
+        return tok.decode(res[0].sequences_ids[0], skip_special_tokens=True)
+
+    def _lang_token(self) -> str:
+        lang = self.config.language
+        return lang if lang.startswith("<|") else f"<|{lang}|>"
+
+    def _prompt_is_forceable(self) -> bool:
+        """Vrai si la langue et la tâche demandées existent dans le modèle.
 
         Vérifié à l'avance plutôt qu'en rattrapant l'erreur de `generate` :
-        une erreur sans rapport (longueur, mémoire) ne doit pas passer pour
-        un problème de langue.
+        une erreur sans rapport (longueur, mémoire) ne doit pas passer pour un
+        problème de langue. Jamais de repli en traduction : sans tâche forcée,
+        Whisper transcrirait, et la variante e2e mesurerait silencieusement
+        autre chose.
         """
-        gc = self._model.generation_config
+        cfg = self.config
+        if self.config.backend == "ctranslate2":
+            # Pas de generation_config dans un modèle converti : on consulte
+            # le vocabulaire, qui contient les tokens spéciaux.
+            vocab = self._processor.tokenizer.get_vocab()
+            langs = vocab
+            tasks = {t for t in ("transcribe", "translate") if f"<|{t}|>" in vocab}
+        else:
+            gc = self._model.generation_config
+            langs = getattr(gc, "lang_to_id", None) or {}
+            tasks = getattr(gc, "task_to_id", None) or {}
+
         missing = []
-        if self.config.language:
-            token = self.config.language
-            token = token if token.startswith("<|") else f"<|{token}|>"
-            if token not in (getattr(gc, "lang_to_id", None) or {}):
-                missing.append(token)
-        if self.config.task not in (getattr(gc, "task_to_id", None) or {}):
-            missing.append(self.config.task)
-        return missing
+        if cfg.language and self._lang_token() not in langs:
+            missing.append(self._lang_token())
+        if cfg.task not in tasks:
+            missing.append(cfg.task)
+        if not missing:
+            return True
+        if cfg.task == "translate":
+            raise ValueError(f"{cfg.model_id} ne connaît pas {missing} : "
+                             f"traduction directe impossible")
+        logger.warning("%s ne connaît pas %s : génération sans langue ni tâche imposées",
+                       cfg.model_id, missing)
+        return False
 
     __call__ = transcribe

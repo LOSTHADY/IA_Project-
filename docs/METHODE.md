@@ -22,7 +22,9 @@ boîte noire. Aucun temps n'est investi à en comparer plusieurs.
 ## 2. Séparation entraînement / déploiement
 
 - **Entraînement** : GPU, sur Colab. Aucun fine-tuning n'est réalisable sur CPU.
-- **Déploiement** : CPU uniquement, modèles quantisés, `llama.cpp` pour le LLM.
+- **Déploiement** : CPU uniquement, modèles quantisés — CTranslate2 (int8)
+  pour Whisper et NLLB, `llama.cpp` (GGUF) pour le LLM. Recette et mesures :
+  [`DEPLOIEMENT.md`](DEPLOIEMENT.md).
 
 Cette séparation est assumée et doit être énoncée explicitement : la
 contrainte « sans GPU » porte sur l'inférence, pas sur l'entraînement.

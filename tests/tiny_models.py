@@ -122,7 +122,7 @@ def nllb(out: Path) -> Path:
     cfg = M2M100Config(
         vocab_size=len(tok), d_model=16, encoder_layers=1, decoder_layers=1,
         encoder_attention_heads=2, decoder_attention_heads=2, encoder_ffn_dim=16,
-        decoder_ffn_dim=16, max_position_embeddings=128, pad_token_id=tok.pad_token_id,
+        decoder_ffn_dim=16, max_position_embeddings=1024, pad_token_id=tok.pad_token_id,
         bos_token_id=tok.bos_token_id, eos_token_id=tok.eos_token_id,
         decoder_start_token_id=tok.eos_token_id,
     )

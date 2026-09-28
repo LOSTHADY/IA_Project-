@@ -11,7 +11,7 @@ Produit, pour un jeu de test donné :
 Utilisation :
     python -m eval.run_eval --testset data/testset/testset.jsonl --arch cascade
     python -m eval.run_eval --testset data/testset/testset.jsonl --arch e2e
-    python -m eval.run_eval --testset ... --arch cascade --compare-mt-only
+    python -m eval.run_eval --testset ... --arch cascade --config modeles-cpu/config.json
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bambara_voice.config import cascade_config, e2e_config
+from bambara_voice.config import build_config
 from bambara_voice.mt import Translator
 from bambara_voice.pipeline import VoicePipeline
 
@@ -42,13 +42,14 @@ def evaluate(
     out_dir: Path,
     limit: int | None = None,
     synthesize: bool = False,
+    config_path: Path | None = None,
 ) -> dict:
     items = load_testset(testset_path)
     if limit:
         items = items[:limit]
     audio_root = testset_path.parent
 
-    config = cascade_config() if architecture == "cascade" else e2e_config()
+    config = build_config(architecture, config_path)
     pipeline = VoicePipeline(config)
 
     traces, rows = [], []
@@ -73,11 +74,13 @@ def evaluate(
         "architecture": architecture,
         "testset": str(testset_path),
         "composition": describe(evaluated),
+        "configuration": str(config_path) if config_path else "défaut",
+        "appareil": config.device,
         "modeles": {
-            "asr": config.asr.model_id,
-            "mt_in": config.mt_in.model_id,
-            "mt_out": config.mt_out.model_id,
-            "llm": f"{config.llm.backend}:{config.llm.model_id}",
+            "asr": f"{config.asr.backend}:{config.asr.model_id}",
+            "mt_in": f"{config.mt_in.backend}:{config.mt_in.model_id}",
+            "mt_out": f"{config.mt_out.backend}:{config.mt_out.model_id}",
+            "llm": f"{config.llm.backend}:{config.llm.gguf_path or config.llm.model_id}",
             "tts": config.tts.model_id,
         },
     }
@@ -142,12 +145,15 @@ def main() -> None:
     parser.add_argument("--arch", choices=["cascade", "e2e"], default="cascade")
     parser.add_argument("--out", type=Path, default=Path("eval/results"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--config", type=Path, default=None,
+                        help="fichier de déploiement JSON (cf. scripts/export_cpu.py)")
     parser.add_argument("--synthesize", action="store_true",
                         help="inclure la TTS dans le chronométrage (plus lent)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    report = evaluate(args.testset, args.arch, args.out, args.limit, args.synthesize)
+    report = evaluate(args.testset, args.arch, args.out, args.limit, args.synthesize,
+                      args.config)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

@@ -30,6 +30,11 @@ data/testset/testset*.jsonl
 !data/testset/testset.example.jsonl
 *.jsonl.tmp
 
+# Échantillons de corpus publics exportés (scripts/export_corpus_sample.py)
+# et modèles convertis pour le CPU (scripts/export_cpu.py) : régénérables.
+data/echantillons/
+modeles-cpu/
+
 # Sorties d'évaluation (régénérables)
 eval/results/
 outputs/

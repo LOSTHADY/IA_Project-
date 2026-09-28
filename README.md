@@ -137,11 +137,28 @@ python -m eval.baselines --label bout-en-bout asr --model ckpt/whisper-bm --task
 Les spectrogrammes sont calculés à la volée : les précalculer occuperait des
 dizaines de Go pour Jeli-ASR.
 
+## Déploiement sur CPU (phase 5)
+
+```bash
+# Whisper et NLLB en int8 (CTranslate2), et un fichier de configuration
+python scripts/export_cpu.py --out modeles-cpu --whisper ckpt/whisper-bm \
+    --nllb-bm2fr ckpt/nllb-bm2fr --nllb-fr2bm ckpt/nllb-fr2bm
+
+python app/gradio_app.py --config modeles-cpu/config.json         # démo
+python -m eval.run_eval --config modeles-cpu/config.json \
+    --testset data/echantillons/jeli-test/testset.jsonl --synthesize  # latence
+```
+
+Modèles 4 fois plus légers. La traduction va 2 à 2,5 fois plus vite ;
+Whisper 1,3 à 1,5 fois sur des énoncés courts, parce que son encodeur ne
+profite pas de l'int8. Recette complète, perte de qualité à mesurer et
+ordres de grandeur : [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md).
+
 ## Structure
 
 ```
 bambara_voice/     pipeline d'inférence
-  config.py        tous les identifiants de modèles, en un seul endroit
+  config.py        identifiants de modèles et fichier de déploiement (--config)
   normalize.py     normalisation et repli orthographique du bambara
   asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC)
   mt.py            NLLB bambara <-> français
@@ -150,11 +167,12 @@ bambara_voice/     pipeline d'inférence
   templates.py     réponses validées par un locuteur natif
   pipeline.py      orchestration + trace chronométrée de chaque tour
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
-scripts/           fine-tuning Colab, préparation du jeu de test
+scripts/           fine-tuning Colab, jeu de test, conversion CPU
 app/               démo Gradio, application de collecte
 notebooks/         notebooks Colab (phases 1 et 3-4)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
+docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
 data/templates.json  banque de gabarits (à remplir)
 data/testset/      jeu de test (à collecter — chemin critique), consignes
 ```
@@ -168,7 +186,7 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 | 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
 | 3 | Fine-tuning Whisper + NLLB | scripts testés de bout en bout sur petits modèles, notebook prêt |
 | 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
-| 5 | Assemblage CPU, quantisation, démo | à faire |
+| 5 | Assemblage CPU, quantisation, démo | outillage prêt et testé ; à mesurer sur la machine cible |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
 défendable. Voir [`docs/COLLECTE.md`](docs/COLLECTE.md) pour le protocole et

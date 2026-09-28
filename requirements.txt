@@ -20,5 +20,6 @@ gradio>=4.44
 # peft>=0.12
 # bitsandbytes>=0.43
 
-# --- LLM local en GGUF (optionnel, backend "llamacpp") ---
-# llama-cpp-python>=0.3
+# --- Déploiement CPU (phase 5, cf. docs/DEPLOIEMENT.md) ---
+# ctranslate2>=4.0      # Whisper et NLLB en int8 (backend "ctranslate2")
+# llama-cpp-python>=0.3 # LLM en GGUF (backend "llamacpp")

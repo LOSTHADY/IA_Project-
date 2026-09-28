@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bambara_voice.config import cascade_config, e2e_config  # noqa: E402
+from bambara_voice.config import build_config  # noqa: E402
 from bambara_voice.pipeline import VoicePipeline  # noqa: E402
 
 
@@ -90,12 +90,14 @@ def build_interface(pipeline: VoicePipeline):
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--arch", choices=["cascade", "e2e"], default="cascade")
+    p.add_argument("--config", default=None,
+                   help="fichier de déploiement JSON (cf. scripts/export_cpu.py)")
     p.add_argument("--llm-backend", choices=["transformers", "llamacpp", "echo"],
                    default=None)
     p.add_argument("--share", action="store_true")
     args = p.parse_args()
 
-    config = cascade_config() if args.arch == "cascade" else e2e_config()
+    config = build_config(args.arch, args.config)
     if args.llm_backend:
         config.llm.backend = args.llm_backend
     build_interface(VoicePipeline(config)).launch(share=args.share)
