@@ -99,6 +99,16 @@ def test_ecart_orthographique_est_isole_par_le_repli():
     assert scores.orthographic_gap == scores.wer
 
 
+def test_la_ponctuation_ne_compte_ni_en_strict_ni_dans_l_ecart():
+    # Une virgule ou un point de plus n'est pas une erreur de reconnaissance,
+    # et ne doit pas gonfler l'écart « orthographique ».
+    scores = score_asr(["I ni cɛ, n bɛ taa."], ["i ni cɛ n bɛ taa"])
+    assert scores.wer == 0 and scores.orthographic_gap == 0
+    # L'apostrophe, elle, est orthographique : comptée en strict seulement.
+    scores = score_asr(["ka fɔ"], ["k'a fɔ"])
+    assert scores.wer > 0 and scores.wer_folded == 0
+
+
 def test_score_mt_identique_donne_100():
     scores = score_mt(["bonjour"], ["bonjour"])
     assert round(scores.chrf) == 100

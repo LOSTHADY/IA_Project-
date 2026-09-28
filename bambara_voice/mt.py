@@ -3,13 +3,16 @@
 NLLB couvre nativement `bam_Latn`. Le zero-shot sert de référence basse ; le
 fine-tuning sur Bayelemabaga (cf. scripts/finetune_nllb.py) est ce qui fait
 gagner l'essentiel des points de chrF++.
+
+Pour le déploiement CPU, un modèle converti par `scripts/export_cpu.py`
+tourne sous CTranslate2 (`backend="ctranslate2"`, int8).
 """
 
 from __future__ import annotations
 
 import logging
 
-from .config import MTConfig
+from .config import MTConfig, split_device
 from .normalize import normalize
 
 logger = logging.getLogger(__name__)
@@ -36,17 +39,26 @@ class Translator:
         import torch
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
-        key = (self.config.model_id, self.device)
+        cfg = self.config
+        key = (cfg.model_id, self.device, cfg.backend, cfg.compute_type)
         if key in Translator._cache:
             self._tokenizer, self._model = Translator._cache[key]
             return
 
-        logger.info("Chargement MT %s sur %s", self.config.model_id, self.device)
-        tok = AutoTokenizer.from_pretrained(self.config.model_id)
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            self.config.model_id, torch_dtype=torch.float32
-        ).to(self.device)
-        model.eval()
+        logger.info("Chargement MT %s (%s) sur %s", cfg.model_id, cfg.backend, self.device)
+        # Un dossier converti contient aussi le tokenizer d'origine.
+        tok = AutoTokenizer.from_pretrained(cfg.model_id)
+        if cfg.backend == "ctranslate2":
+            import ctranslate2
+
+            device, index = split_device(self.device)
+            model = ctranslate2.Translator(cfg.model_id, device=device, device_index=index,
+                                           compute_type=cfg.compute_type)
+        else:
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                cfg.model_id, torch_dtype=torch.float32
+            ).to(self.device)
+            model.eval()
         Translator._cache[key] = (tok, model)
         self._tokenizer, self._model = tok, model
 
@@ -80,6 +92,8 @@ class Translator:
         cfg = self.config
         # Le tokenizer NLLB doit connaître la langue source avant l'encodage.
         self._tokenizer.src_lang = cfg.src_lang
+        if cfg.backend == "ctranslate2":
+            return self._finish(self._translate_ct2(text))
 
         inputs = self._tokenizer(
             text, return_tensors="pt", truncation=True, max_length=512
@@ -95,9 +109,21 @@ class Translator:
 
         with torch.no_grad():
             ids = self._model.generate(**inputs, **gen_kwargs)
-        out = self._tokenizer.batch_decode(ids, skip_special_tokens=True)[0]
+        return self._finish(self._tokenizer.batch_decode(ids, skip_special_tokens=True)[0])
 
-        if cfg.tgt_lang.startswith("bam"):
+    def _translate_ct2(self, text: str) -> str:
+        tok, cfg = self._tokenizer, self.config
+        source = tok.convert_ids_to_tokens(tok.encode(text, truncation=True, max_length=512))
+        # Le préfixe cible joue le rôle de forced_bos_token_id.
+        res = self._model.translate_batch(
+            [source], target_prefix=[[cfg.tgt_lang]], beam_size=cfg.beam_size,
+            max_decoding_length=cfg.max_new_tokens,
+        )
+        target = res[0].hypotheses[0][1:]  # sans le token de langue
+        return tok.decode(tok.convert_tokens_to_ids(target), skip_special_tokens=True)
+
+    def _finish(self, out: str) -> str:
+        if self.config.tgt_lang.startswith("bam"):
             out = normalize(out, lower=False)
         return out.strip()
 

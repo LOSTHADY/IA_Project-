@@ -22,7 +22,9 @@ boîte noire. Aucun temps n'est investi à en comparer plusieurs.
 ## 2. Séparation entraînement / déploiement
 
 - **Entraînement** : GPU, sur Colab. Aucun fine-tuning n'est réalisable sur CPU.
-- **Déploiement** : CPU uniquement, modèles quantisés, `llama.cpp` pour le LLM.
+- **Déploiement** : CPU uniquement, modèles quantisés — CTranslate2 (int8)
+  pour Whisper et NLLB, `llama.cpp` (GGUF) pour le LLM. Recette et mesures :
+  [`DEPLOIEMENT.md`](DEPLOIEMENT.md).
 
 Cette séparation est assumée et doit être énoncée explicitement : la
 contrainte « sans GPU » porte sur l'inférence, pas sur l'entraînement.
@@ -49,6 +51,18 @@ multi-tâche produisant l'une ou l'autre cible (`scripts/finetune_whisper.py
 --task both`). Les deux variantes partagent alors exactement le même encodeur,
 ce qui rend la comparaison méthodologiquement propre : la seule différence est
 architecturale.
+
+**Token de langue.** Whisper n'a pas de token pour le bambara ; on détourne
+celui du swahili, à l'entraînement comme à l'inférence
+(`WHISPER_LANG_SLOT`). C'est ce token, suivi du token de tâche, qui fait
+produire au même modèle soit du bambara, soit du français. Si l'inférence
+n'utilisait pas le même token, la tâche ne serait plus forcée, et les deux
+variantes produiraient la même sortie sans que rien ne le signale.
+
+**Pas de référence zero-shot pour B.** La tâche `translate` de Whisper
+d'origine ne produit que de l'anglais. La variante bout-en-bout n'existe
+qu'après fine-tuning, alors que la cascade a une référence zero-shot
+(phase 1).
 
 **Compromis à documenter** : la variante B supprime un maillon et une source
 d'erreurs, mais ne produit aucune transcription bambara. Elle prive donc le
@@ -111,6 +125,26 @@ traduction — depuis la transcription de référence, puis depuis la sortie de
 l'ASR. La différence isole le coût de l'ASR indépendamment de la qualité de la
 traduction.
 
+Deux règles garantissent que les chiffres se comparent d'une phase à
+l'autre :
+
+- **Le test ne sert qu'à mesurer.** Le meilleur checkpoint est choisi sur
+  une validation, prise dans `train` si le jeu n'en fournit pas. Choisir sur
+  le test puis y rapporter le score le rendrait optimiste.
+- **Même échantillon partout.** Références zero-shot, modèles affinés,
+  cascade et bout-en-bout sont évalués sur les mêmes énoncés : même corpus,
+  même partition, même graine (`eval.baselines`). Chaque rapport consigne
+  ces paramètres ainsi que les versions des bibliothèques.
+
+**Significativité.** Aucun écart n'est annoncé sans son intervalle de
+confiance. `eval.significance` rééchantillonne les énoncés (bootstrap, 1 000
+tirages) et recalcule chaque score au niveau du corpus. Pour deux systèmes,
+le test est apparié : les mêmes tirages servent aux deux, ce que permet
+la règle précédente (Koehn, 2004). Un écart dont l'IC contient zéro n'est
+pas établi, quelle que soit sa taille apparente. Pour la synthèse, le MOS
+(`eval.mos`) a lui aussi son IC, par bootstrap sur les phrases, car les
+notes d'une même phrase ne sont pas indépendantes.
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source
@@ -129,7 +163,7 @@ traduction.
 | Phase | Contenu | Où |
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | ce dépôt |
-| 1 | Références zero-shot (Whisper, NLLB, MMS-TTS) | Colab |
+| 1 | Références zero-shot (Whisper, MMS, NLLB, MMS-TTS) | Colab |
 | 2 | **Jeu de test maison, 200–500 énoncés** | terrain |
 | 3 | Fine-tuning Whisper multi-tâche + NLLB deux sens | Colab |
 | 4 | Comparaison cascade / bout-en-bout, propagation d'erreurs | Colab |
@@ -146,6 +180,9 @@ avancer en parallèle ; elle, non.
 - Where Are We At with ASR for the Bambara Language? — AfricaNLP 2026 —
   <https://aclanthology.org/2026.africanlp-main.26.pdf>
 - Jeli-ASR (RobotsMali) — <https://huggingface.co/datasets/RobotsMali/jeli-asr>
+- Bayelemabaga (RobotsMaliAI) — <https://huggingface.co/datasets/RobotsMaliAI/bayelemabaga>
+- Koehn, P. — *Statistical Significance Tests for Machine Translation
+  Evaluation* — EMNLP 2004 — <https://aclanthology.org/W04-3250/>
 - Kunnafonidilaw ka Cadeau, ASR dataset de bambara contemporain —
   <https://arxiv.org/html/2512.19400>
 - Manding Language Tech Resources (An ka taa) —

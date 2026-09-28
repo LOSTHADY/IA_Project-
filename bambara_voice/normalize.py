@@ -89,6 +89,16 @@ def fold(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+def strip_punctuation(text: str) -> str:
+    """Retire la ponctuation mais garde lettres, diacritiques et apostrophes.
+
+    Sert au WER strict : la ponctuation n'est pas prononcée et la littérature
+    ne la compte pas. La retirer ici comme dans `fold()` garantit que l'écart
+    entre WER strict et relâché ne mesure que l'orthographe.
+    """
+    return _WS_RE.sub(" ", _PUNCT_STRIP_RE.sub(" ", text)).strip()
+
+
 def has_official_orthography(text: str) -> bool:
     """Vrai si le texte utilise au moins un caractère latin étendu bambara.
 

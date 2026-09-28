@@ -1,0 +1,145 @@
+# Phase 1 — références zero-shot, sur les machines de GitHub (CPU).
+#
+# Même protocole que notebooks/phase1_zero_shot.ipynb, sans GPU : plus lent,
+# mais gratuit pour un dépôt public, et sans rien à surveiller. Cinq mesures
+# en parallèle, puis un tableau récapitulatif (eval.compare) et les
+# intervalles de confiance (eval.significance) dans le résumé de l'exécution.
+# Rapports, sorties ligne à ligne et audios de synthèse (grille MOS) sont
+# téléchargeables dans les artefacts.
+#
+# Latence et RTF sont mesurés sur les processeurs de GitHub : indicatifs.
+#
+# Lancement : onglet Actions > « Phase 1 — références zero-shot » > Run
+# workflow (une fois ce fichier sur la branche par défaut), ou
+# automatiquement quand ce fichier change sur la branche de travail.
+name: Phase 1 — références zero-shot
+
+on:
+  workflow_dispatch:
+    inputs:
+      jeli_config:
+        description: "Sous-ensemble de Jeli-ASR (laisser vide si le jeu n'en demande pas)"
+        default: ""
+      limite_asr:
+        description: "Énoncés évalués en ASR"
+        default: "300"
+      limite_mt:
+        description: "Phrases évaluées en traduction"
+        default: "500"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/phase1-zero-shot.yml]
+
+env:
+  # Facultatif : secret HF_TOKEN, seulement si un jeu est « gated ».
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  JELI_CONFIG: ${{ inputs.jeli_config }}
+  LIMITE_ASR: ${{ inputs.limite_asr || '300' }}
+  LIMITE_MT: ${{ inputs.limite_mt || '500' }}
+
+jobs:
+  mesure:
+    name: ${{ matrix.nom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: asr-whisper
+            args: >-
+              --label "Whisper-small zero-shot"
+              asr $JELI --model openai/whisper-small --limit $LIMITE_ASR
+          - nom: asr-mms
+            args: >-
+              --label "MMS + NLLB zero-shot"
+              asr $JELI --model facebook/mms-1b-all --kind ctc --target-lang bam
+              --with-mt --limit $LIMITE_ASR
+          - nom: mt-bayelemabaga
+            args: >-
+              --label "NLLB zero-shot / Bayelemabaga"
+              mt --dataset RobotsMaliAI/bayelemabaga --limit $LIMITE_MT
+          - nom: mt-jeli
+            args: >-
+              --label "NLLB zero-shot / Jeli-ASR"
+              mt $JELI --limit $LIMITE_MT
+          - nom: tts
+            args: >-
+              --label "MMS-TTS zero-shot"
+              tts $JELI --limit 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Libérer de la place (modèles et corpus pèsent plusieurs Go)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Mesure
+        run: |
+          JELI="--dataset RobotsMali/jeli-asr"
+          if [ -n "$JELI_CONFIG" ]; then JELI="$JELI --config $JELI_CONFIG"; fi
+          python -m eval.baselines --out results --device cpu ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase1-${{ matrix.nom }}
+          path: results/
+          if-no-files-found: warn
+
+  tableau:
+    needs: mesure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: phase1-*
+          path: results
+          merge-multiple: true
+
+      - name: Tableau et intervalles de confiance
+        run: |
+          {
+            echo "## Phase 1 — références zero-shot"
+            echo
+            python -m eval.compare results/*.json
+            echo
+            echo "### Intervalles de confiance (bootstrap, 1 000 tirages)"
+            echo
+            echo "ASR : Whisper contre MMS, sur les mêmes énoncés."
+            echo
+            python -m eval.significance results/asr-*.json \
+              --noms "Whisper-small zero-shot" "MMS + NLLB zero-shot" || echo "(ASR incomplet)"
+            for f in results/mt-*.json; do
+              echo
+              python -m eval.significance "$f" || true
+            done
+          } | tee tableau.md
+          cat tableau.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase1-resultats
+          path: |
+            tableau.md
+            results/

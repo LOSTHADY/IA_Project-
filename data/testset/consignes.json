@@ -1,0 +1,53 @@
+{
+  "_comment": "Situations de parole spontanée, adressées à un assistant vocal. L'opérateur explique la situation (en bambara de préférence) ; le locuteur parle avec ses propres mots, sans traduire la consigne mot à mot. Les thèmes 'salutation', 'remerciement' et 'incomprehension' recoupent data/templates.json : ils mesurent la couverture des gabarits. Cf. docs/COLLECTE.md.",
+  "consignes": [
+    {"id": "salut-matin", "theme": "salutation", "consigne": "C'est le matin. Saluez l'assistant et demandez-lui comment il va."},
+    {"id": "salut-soir", "theme": "salutation", "consigne": "C'est le soir. Saluez l'assistant comme vous salueriez un voisin."},
+    {"id": "salut-famille", "theme": "salutation", "consigne": "Saluez l'assistant et demandez des nouvelles de la famille, comme on le fait d'habitude."},
+    {"id": "merci", "theme": "remerciement", "consigne": "L'assistant vient de vous aider. Remerciez-le."},
+    {"id": "au-revoir", "theme": "remerciement", "consigne": "Vous avez fini. Dites au revoir à l'assistant."},
+    {"id": "pas-compris", "theme": "incomprehension", "consigne": "Vous n'avez pas compris la réponse de l'assistant. Dites-le et demandez-lui de répéter."},
+    {"id": "plus-lentement", "theme": "incomprehension", "consigne": "L'assistant parle trop vite. Demandez-lui de parler plus lentement."},
+    {"id": "correction", "theme": "incomprehension", "consigne": "L'assistant a mal compris votre question. Corrigez-le et reposez la question."},
+
+    {"id": "sante-fievre", "theme": "santé", "consigne": "Votre enfant a de la fièvre depuis hier. Demandez à l'assistant ce que vous pouvez faire."},
+    {"id": "sante-centre", "theme": "santé", "consigne": "Demandez où se trouve le centre de santé le plus proche et à quelle heure il ouvre."},
+    {"id": "sante-palu", "theme": "santé", "consigne": "Demandez comment protéger votre famille du paludisme pendant l'hivernage."},
+    {"id": "sante-vaccin", "theme": "santé", "consigne": "Demandez quand il faut faire vacciner un nouveau-né."},
+
+    {"id": "agri-semis", "theme": "agriculture", "consigne": "Demandez à quel moment il faut semer le mil ou le maïs cette année."},
+    {"id": "agri-pluie", "theme": "météo", "consigne": "Demandez s'il va pleuvoir demain dans votre village."},
+    {"id": "agri-insectes", "theme": "agriculture", "consigne": "Des insectes attaquent votre champ. Expliquez le problème et demandez conseil."},
+    {"id": "agri-engrais", "theme": "agriculture", "consigne": "Demandez combien coûte un sac d'engrais et où l'acheter."},
+    {"id": "elevage-malade", "theme": "élevage", "consigne": "Une de vos vaches ne mange plus. Expliquez-le et demandez ce qu'il faut faire."},
+    {"id": "meteo-chaleur", "theme": "météo", "consigne": "Demandez s'il va faire très chaud aujourd'hui."},
+
+    {"id": "marche-riz", "theme": "marché", "consigne": "Demandez le prix du kilo de riz au marché aujourd'hui."},
+    {"id": "marche-mouton", "theme": "marché", "consigne": "Vous voulez acheter un mouton pour la fête. Demandez combien il faut prévoir."},
+    {"id": "marche-vendre", "theme": "marché", "consigne": "Vous voulez vendre vos légumes. Demandez où vous en tirerez le meilleur prix."},
+    {"id": "marche-monnaie", "theme": "marché", "consigne": "Un commerçant vous a mal rendu la monnaie. Racontez ce qui s'est passé."},
+
+    {"id": "tel-argent", "theme": "téléphone et argent", "consigne": "Demandez comment envoyer de l'argent à un parent avec votre téléphone."},
+    {"id": "tel-credit", "theme": "téléphone et argent", "consigne": "Votre téléphone n'a plus de crédit. Demandez comment en acheter."},
+    {"id": "tel-reseau", "theme": "téléphone et argent", "consigne": "Il n'y a pas de réseau chez vous depuis ce matin. Plaignez-vous et demandez quoi faire."},
+    {"id": "tel-batterie", "theme": "téléphone et argent", "consigne": "Il n'y a pas d'électricité. Demandez comment recharger la batterie de votre téléphone."},
+    {"id": "tel-code", "theme": "téléphone et argent", "consigne": "Vous avez oublié le code secret de votre compte mobile. Demandez comment faire."},
+
+    {"id": "transport-car", "theme": "transport", "consigne": "Demandez à quelle heure part le car pour Ségou et combien coûte le billet."},
+    {"id": "transport-chemin", "theme": "transport", "consigne": "Demandez le chemin pour aller à la mairie depuis le grand marché."},
+    {"id": "transport-moto", "theme": "transport", "consigne": "Votre moto est en panne sur la route. Expliquez la situation et demandez de l'aide."},
+
+    {"id": "temps-heure", "theme": "date et heure", "consigne": "Demandez l'heure qu'il est."},
+    {"id": "temps-jour", "theme": "date et heure", "consigne": "Demandez quel jour on est aujourd'hui."},
+    {"id": "temps-fete", "theme": "date et heure", "consigne": "Demandez dans combien de jours aura lieu la prochaine fête."},
+
+    {"id": "admin-ecole", "theme": "administration", "consigne": "Demandez comment inscrire votre enfant à l'école et quels papiers il faut apporter."},
+    {"id": "admin-identite", "theme": "administration", "consigne": "Demandez quels documents il faut pour faire une carte d'identité."},
+    {"id": "admin-naissance", "theme": "administration", "consigne": "Demandez où l'on peut obtenir un acte de naissance."},
+
+    {"id": "vie-bapteme", "theme": "vie sociale", "consigne": "Vous organisez un baptême. Demandez ce qu'il faut préparer."},
+    {"id": "vie-recit", "theme": "vie sociale", "consigne": "Racontez à l'assistant ce que vous avez fait hier, en deux ou trois phrases."},
+    {"id": "vie-cuisine", "theme": "vie sociale", "consigne": "Demandez comment préparer un plat que vous aimez."},
+    {"id": "libre", "theme": "libre", "consigne": "Posez à l'assistant une question de votre choix, sur n'importe quel sujet."}
+  ]
+}

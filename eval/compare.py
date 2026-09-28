@@ -22,6 +22,12 @@ ROWS = [
     ("chrF++ (texte de réf.)", lambda r: _num(r.get("mt_in_depuis_texte_de_reference", {}).get("chrf"))),
     ("Perte due à l'ASR", lambda r: _num(r.get("propagation_erreurs", {}).get("perte_absolue"))),
     ("BLEU (depuis ASR)", lambda r: _num(r.get("mt_in_depuis_asr", {}).get("bleu"))),
+    # Références zero-shot de la traduction seule (eval.baselines mt).
+    ("chrF++ bm→fr", lambda r: _num(r.get("mt_bm_fr", {}).get("chrf"))),
+    ("chrF++ fr→bm", lambda r: _num(r.get("mt_fr_bm", {}).get("chrf"))),
+    ("chrF++ fr→bm (replié)", lambda r: _num(r.get("mt_fr_bm_replie", {}).get("chrf"))),
+    ("BLEU bm→fr", lambda r: _num(r.get("mt_bm_fr", {}).get("bleu"))),
+    ("BLEU fr→bm", lambda r: _num(r.get("mt_fr_bm", {}).get("bleu"))),
     ("Latence totale (s)", lambda r: _num(r.get("latence", {}).get("total_moyen_s"))),
     ("RTF", lambda r: _num(r.get("latence", {}).get("rtf_moyen"))),
     ("Couverture gabarits", lambda r: _pct(r.get("gabarits", {}).get("couverture"))),
@@ -37,7 +43,7 @@ def _num(v) -> str:
 
 
 def to_markdown(reports: list[dict]) -> str:
-    names = [r.get("architecture", "?") for r in reports]
+    names = [r.get("nom") or r.get("architecture", "?") for r in reports]
     lines = ["| Métrique | " + " | ".join(names) + " |",
              "|---" * (len(names) + 1) + "|"]
     for label, getter in ROWS:
