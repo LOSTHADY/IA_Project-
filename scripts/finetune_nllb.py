@@ -12,24 +12,30 @@ l'utilisateur entend) mérite d'être optimisé séparément.
 Référence : Bayelemabaga contient ~47k paires alignées bambara-français
 issues du Corpus Bambara de Référence (NAACL 2025). C'est peu — attention au
 surapprentissage, garder le nombre d'époques bas et surveiller le chrF++ de
-validation plutôt que la perte.
+validation plutôt que la perte. La sélection se fait sur la validation, pour
+que la partition de test reste intacte (cf. eval.baselines mt).
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
-BAM, FRA = "bam_Latn", "fra_Latn"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from bambara_voice.config import BAM, FRA  # noqa: E402
+from eval.corpora import BAYELEMABAGA  # noqa: E402
 
 
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dataset", default="RobotsMali-AI/bayelemabaga")
+    p.add_argument("--dataset", default=BAYELEMABAGA)
     p.add_argument("--model", default="facebook/nllb-200-distilled-600M")
     p.add_argument("--direction", choices=["bm2fr", "fr2bm"], required=True)
-    p.add_argument("--bm-column", default="bambara")
-    p.add_argument("--fr-column", default="french")
+    p.add_argument("--bm-column", default=None, help="défaut : détectée")
+    p.add_argument("--fr-column", default=None, help="défaut : détectée")
     p.add_argument("--output", default=None)
     p.add_argument("--epochs", type=float, default=3.0)
     p.add_argument("--batch-size", type=int, default=8)
@@ -46,38 +52,49 @@ def main() -> None:
     output = args.output or f"checkpoints/nllb-{args.direction}"
 
     import torch
-    from datasets import load_dataset
     from transformers import (
         AutoTokenizer, AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
     )
     import sacrebleu
 
+    from eval.corpora import detect_columns, load_any
+
+    ds = load_any(args.dataset)
+    cols = detect_columns(ds["train"].features, args.bm_column, args.fr_column,
+                          need_fr=True)
+    print(f"Schéma : {dict(ds['train'].features)}\nColonnes : {cols.describe()}")
+
     if args.direction == "bm2fr":
         src_lang, tgt_lang = BAM, FRA
-        src_col, tgt_col = args.bm_column, args.fr_column
+        src_col, tgt_col = cols.bm, cols.fr
     else:
         src_lang, tgt_lang = FRA, BAM
-        src_col, tgt_col = args.fr_column, args.bm_column
+        src_col, tgt_col = cols.fr, cols.bm
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model, src_lang=src_lang, tgt_lang=tgt_lang
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model)
 
-    ds = load_dataset(args.dataset)
-    if "validation" not in ds and "test" not in ds:
-        ds = ds["train"].train_test_split(test_size=0.05, seed=42)
-        train_raw, eval_raw = ds["train"], ds["test"]
+    eval_key = next((k for k in ("validation", "valid", "dev") if k in ds), None)
+    if eval_key is None:
+        split = ds["train"].train_test_split(test_size=0.05, seed=42)
+        train_raw, eval_raw = split["train"], split["test"]
     else:
-        train_raw = ds["train"]
-        eval_raw = ds.get("validation") or ds["test"]
+        train_raw, eval_raw = ds["train"], ds[eval_key]
     if args.max_samples:
         train_raw = train_raw.select(range(min(args.max_samples, len(train_raw))))
 
+    def texts(batch, column):
+        # Format WMT (translation = {bam, fr}) ou colonnes plates.
+        if cols.nested:
+            return [row[column] for row in batch[cols.nested]]
+        return batch[column]
+
     def preprocess(batch):
         model_inputs = tokenizer(
-            batch[src_col], text_target=batch[tgt_col],
+            texts(batch, src_col), text_target=texts(batch, tgt_col),
             max_length=args.max_length, truncation=True,
         )
         return model_inputs

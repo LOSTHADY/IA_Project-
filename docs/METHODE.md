@@ -50,6 +50,18 @@ multi-tâche produisant l'une ou l'autre cible (`scripts/finetune_whisper.py
 ce qui rend la comparaison méthodologiquement propre : la seule différence est
 architecturale.
 
+**Token de langue.** Whisper n'a pas de token pour le bambara ; on détourne
+celui du swahili, à l'entraînement comme à l'inférence
+(`WHISPER_LANG_SLOT`). C'est ce token, suivi du token de tâche, qui fait
+produire au même modèle soit du bambara, soit du français. Si l'inférence
+n'utilisait pas le même token, la tâche ne serait plus forcée, et les deux
+variantes produiraient la même sortie sans que rien ne le signale.
+
+**Pas de référence zero-shot pour B.** La tâche `translate` de Whisper
+d'origine ne produit que de l'anglais. La variante bout-en-bout n'existe
+qu'après fine-tuning, alors que la cascade a une référence zero-shot
+(phase 1).
+
 **Compromis à documenter** : la variante B supprime un maillon et une source
 d'erreurs, mais ne produit aucune transcription bambara. Elle prive donc le
 système de l'affichage du texte bambara *et* de l'appariement de gabarits
@@ -129,7 +141,7 @@ traduction.
 | Phase | Contenu | Où |
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | ce dépôt |
-| 1 | Références zero-shot (Whisper, NLLB, MMS-TTS) | Colab |
+| 1 | Références zero-shot (Whisper, MMS, NLLB, MMS-TTS) | Colab |
 | 2 | **Jeu de test maison, 200–500 énoncés** | terrain |
 | 3 | Fine-tuning Whisper multi-tâche + NLLB deux sens | Colab |
 | 4 | Comparaison cascade / bout-en-bout, propagation d'erreurs | Colab |
@@ -146,6 +158,7 @@ avancer en parallèle ; elle, non.
 - Where Are We At with ASR for the Bambara Language? — AfricaNLP 2026 —
   <https://aclanthology.org/2026.africanlp-main.26.pdf>
 - Jeli-ASR (RobotsMali) — <https://huggingface.co/datasets/RobotsMali/jeli-asr>
+- Bayelemabaga (RobotsMaliAI) — <https://huggingface.co/datasets/RobotsMaliAI/bayelemabaga>
 - Kunnafonidilaw ka Cadeau, ASR dataset de bambara contemporain —
   <https://arxiv.org/html/2512.19400>
 - Manding Language Tech Resources (An ka taa) —

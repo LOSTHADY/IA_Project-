@@ -18,16 +18,23 @@ Notes de terrain :
     existant peu utilisé (par défaut le swahili "sw") comme emplacement : le
     modèle réapprend ce qu'il désigne pendant le fine-tuning. C'est un
     contournement standard, à mentionner dans le mémoire.
+  - Les colonnes (audio, bambara, français) sont détectées automatiquement
+    et affichées au lancement ; --bm-column / --fr-column pour forcer.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 # Token de langue Whisper détourné pour désigner le bambara (cf. docstring).
-LANG_SLOT = "sw"
+# Partagé avec l'inférence : un écart désactiverait le choix de la tâche.
+from bambara_voice.config import WHISPER_LANG_SLOT as LANG_SLOT  # noqa: E402
 
 
 @dataclass
@@ -39,8 +46,6 @@ class DataCollator:
     decoder_start_token_id: int
 
     def __call__(self, features: list[dict]) -> dict:
-        import torch
-
         inputs = [{"input_features": f["input_features"]} for f in features]
         batch = self.processor.feature_extractor.pad(inputs, return_tensors="pt")
 
@@ -64,9 +69,10 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--model", default="openai/whisper-small")
     p.add_argument("--task", choices=["transcribe", "translate", "both"], default="both",
                    help="cible d'entraînement : bambara, français, ou les deux")
-    p.add_argument("--audio-column", default="audio")
-    p.add_argument("--bm-column", default="bambara", help="colonne de transcription bambara")
-    p.add_argument("--fr-column", default="french", help="colonne de traduction française")
+    p.add_argument("--bm-column", default=None,
+                   help="colonne de transcription bambara (défaut : détectée)")
+    p.add_argument("--fr-column", default=None,
+                   help="colonne de traduction française (défaut : détectée)")
     p.add_argument("--output", default="checkpoints/whisper-bambara")
     p.add_argument("--epochs", type=float, default=3.0)
     p.add_argument("--batch-size", type=int, default=8)
@@ -82,16 +88,15 @@ def main() -> None:
     args = build_argparser().parse_args()
 
     import torch
-    from datasets import load_dataset, Audio, concatenate_datasets
+    from datasets import Audio, concatenate_datasets
     from transformers import (
         WhisperProcessor, WhisperForConditionalGeneration,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
     )
     import evaluate
 
-    import sys, pathlib
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
     from bambara_voice.normalize import normalize
+    from eval.corpora import decode_audio, detect_columns, load_any
 
     processor = WhisperProcessor.from_pretrained(
         args.model, language=LANG_SLOT, task="transcribe"
@@ -102,8 +107,12 @@ def main() -> None:
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
 
-    ds = load_dataset(args.dataset, args.dataset_config)
-    ds = ds.cast_column(args.audio_column, Audio(sampling_rate=16_000))
+    ds = load_any(args.dataset, args.dataset_config)
+    cols = detect_columns(ds["train"].features, args.bm_column, args.fr_column,
+                          need_audio=True, need_fr=args.task != "transcribe")
+    print(f"Schéma : {dict(ds['train'].features)}\nColonnes : {cols.describe()}")
+    # Décodage par soundfile plutôt que par datasets (qui exige torchcodec).
+    ds = ds.cast_column(cols.audio, Audio(decode=False))
 
     def make_prepare(target_column: str, task: str):
         """Une passe de préparation par tâche ; le token de tâche distingue les
@@ -113,9 +122,9 @@ def main() -> None:
         ).tokenizer
 
         def prepare(batch):
-            audio = batch[args.audio_column]
+            audio = decode_audio(batch[cols.audio])  # mono 16 kHz
             batch["input_features"] = processor.feature_extractor(
-                audio["array"], sampling_rate=audio["sampling_rate"]
+                audio, sampling_rate=16_000
             ).input_features[0]
             text = batch[target_column] or ""
             # Normalisation conservatrice côté bambara uniquement.
@@ -130,17 +139,12 @@ def main() -> None:
         parts = []
         if args.task in ("transcribe", "both"):
             parts.append(split.map(
-                make_prepare(args.bm_column, "transcribe"),
+                make_prepare(cols.bm, "transcribe"),
                 remove_columns=split.column_names, num_proc=1,
             ))
         if args.task in ("translate", "both"):
-            if args.fr_column not in split.column_names:
-                raise SystemExit(
-                    f"colonne '{args.fr_column}' absente : la tâche 'translate' "
-                    f"exige une traduction française alignée"
-                )
             parts.append(split.map(
-                make_prepare(args.fr_column, "translate"),
+                make_prepare(cols.fr, "translate"),
                 remove_columns=split.column_names, num_proc=1,
             ))
         return concatenate_datasets(parts).shuffle(seed=42) if len(parts) > 1 else parts[0]

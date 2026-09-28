@@ -76,6 +76,22 @@ L'application suit une séance dans l'ordre :
 
 Protocole et formulaire de consentement : [`docs/COLLECTE.md`](docs/COLLECTE.md).
 
+## Références zero-shot (phase 1)
+
+[![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase1_zero_shot.ipynb)
+
+Ce que donnent les modèles publics tels quels, maillon par maillon, sur
+Jeli-ASR et Bayelemabaga : Whisper et MMS pour l'ASR, NLLB pour la
+traduction dans les deux sens, MMS-TTS avec une grille MOS. Le notebook
+[`notebooks/phase1_zero_shot.ipynb`](notebooks/phase1_zero_shot.ipynb)
+enchaîne tout sur un GPU Colab, en environ 30 minutes.
+
+```bash
+python -m eval.baselines asr --model facebook/mms-1b-all --kind ctc --target-lang bam --with-mt
+python -m eval.baselines mt --dataset RobotsMaliAI/bayelemabaga
+python -m eval.compare eval/results/zero-shot-*.json
+```
+
 ## Évaluation
 
 ```bash
@@ -112,15 +128,16 @@ python scripts/finetune_nllb.py --direction fr2bm
 bambara_voice/     pipeline d'inférence
   config.py        tous les identifiants de modèles, en un seul endroit
   normalize.py     normalisation et repli orthographique du bambara
-  asr.py           Whisper (transcription bm ou traduction directe fr)
+  asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC)
   mt.py            NLLB bambara <-> français
   llm.py           modèle de dialogue + contrainte de style traduisible
   tts.py           synthèse vocale bambara
   templates.py     réponses validées par un locuteur natif
   pipeline.py      orchestration + trace chronométrée de chaque tour
-eval/              métriques, jeu de test, rapports comparatifs
+eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, préparation du jeu de test
 app/               démo Gradio, application de collecte
+notebooks/         notebooks Colab (phase 1)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 data/templates.json  banque de gabarits (à remplir)
@@ -132,7 +149,7 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 | Phase | | |
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
-| 1 | Références zero-shot | à faire |
+| 1 | Références zero-shot | notebook prêt, à exécuter sur Colab |
 | 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
 | 3 | Fine-tuning Whisper + NLLB | à faire |
 | 4 | Comparaison des deux architectures | à faire |

@@ -20,6 +20,12 @@ BAM = "bam_Latn"
 FRA = "fra_Latn"
 ENG = "eng_Latn"
 
+# Whisper n'a pas de token de langue pour le bambara. Le fine-tuning
+# (scripts/finetune_whisper.py) détourne le token swahili ; l'inférence doit
+# utiliser le même, sinon la tâche transcribe/translate n'est plus forcée et
+# les deux architectures produisent la même sortie.
+WHISPER_LANG_SLOT = "sw"
+
 
 @dataclass
 class ASRConfig:
@@ -28,14 +34,19 @@ class ASRConfig:
     `task` distingue les deux architectures comparées dans ce projet :
       - "transcribe" : audio bm -> texte bm, puis MT séparée (cascade)
       - "translate"  : audio bm -> texte fr directement (bout-en-bout)
+
+    `kind` choisit la famille de modèle : "whisper" (seq2seq, les deux tâches)
+    ou "ctc" (wav2vec2 / MMS, transcription seule — cascade uniquement).
     """
 
     model_id: str = "openai/whisper-small"
     task: Literal["transcribe", "translate"] = "transcribe"
-    language: str = "bm"
+    language: str | None = WHISPER_LANG_SLOT  # None : détection automatique
     sample_rate: int = 16_000
     beam_size: int = 1  # 1 = greedy, suffisant et bien plus rapide sur CPU
     max_new_tokens: int = 200
+    kind: Literal["whisper", "ctc"] = "whisper"
+    target_lang: str | None = None  # adaptateur de langue MMS, ex. "bam"
 
 
 @dataclass
@@ -115,6 +126,8 @@ class PipelineConfig:
 
     def __post_init__(self) -> None:
         if self.architecture == "e2e":
+            if self.asr.kind == "ctc":
+                raise ValueError("un modèle CTC ne traduit pas : la variante e2e exige Whisper")
             # En bout-en-bout, l'ASR produit déjà du français : pas de MT entrante.
             self.asr.task = "translate"
 
