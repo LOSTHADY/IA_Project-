@@ -187,6 +187,7 @@ notebooks/         notebooks Colab (phases 1 et 3-4)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
+docs/RESULTATS.md  chiffres mesurés, phase par phase
 data/templates.json  banque de gabarits (à remplir)
 data/testset/      jeu de test (à collecter — chemin critique), consignes
 ```
@@ -196,7 +197,7 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 | Phase | | |
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
-| 1 | Références zero-shot | notebook prêt, à exécuter sur Colab |
+| 1 | Références zero-shot | **fait** — [`docs/RESULTATS.md`](docs/RESULTATS.md) |
 | 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
 | 3 | Fine-tuning Whisper + NLLB | scripts testés de bout en bout sur petits modèles, notebook prêt |
 | 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
