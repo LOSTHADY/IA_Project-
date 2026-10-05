@@ -1,0 +1,56 @@
+# Analyse d'erreurs (eval.analysis) sur les artefacts d'une exécution passée.
+#
+# Ne relance aucun modèle : récupère les rapports et leurs sorties ligne à
+# ligne, puis écrit l'analyse dans le résumé de l'exécution et en artefact.
+# Par défaut, analyse l'exécution de la phase 1 du 28 septembre 2026.
+name: Analyse d'erreurs
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Identifiant de l'exécution à analyser"
+        default: "36467549375"
+      motif:
+        description: "Artefacts à récupérer"
+        default: "phase1-*"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/analyse.yml, eval/analysis.py]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id || '36467549375' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: ${{ inputs.motif || 'phase1-*' }}
+          path: results
+          merge-multiple: true
+
+      - name: Analyse
+        run: |
+          python -m eval.analysis results/*.json --json analyse.json | tee analyse.md
+          cat analyse.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analyse-erreurs
+          path: |
+            analyse.md
+            analyse.json
