@@ -311,6 +311,43 @@ colonnes.
   courtes et complètes, ni un NLLB affiné. Ces deux questions restent
   ouvertes (phase 4).
 
+### Chaîne complète, vrais modèles (zero-shot)
+
+Exécution : workflow « Chaîne complète (vrais modèles, CPU) », 6 octobre
+2026 ([exécution 37449813657](https://github.com/LOSTHADY/IA_Project-/actions/runs/37449813657)).
+Cascade, `configs/zero-shot.json` : MMS-1b-all (ASR), NLLB-600M (deux sens,
+plafond de longueur), Qwen2.5-1.5B-Instruct (LLM), MMS-TTS. 10 énoncés de
+Jeli-ASR (test), PyTorch fp32 sur les processeurs de GitHub.
+
+| Étape | Temps moyen par tour |
+|---|---|
+| Reconnaissance (MMS) | 4,7 s |
+| Traduction bambara → français | 6,1 s |
+| LLM | 16,3 s |
+| Traduction français → bambara | 4,4 s |
+| Synthèse | 1,2 s |
+| **Total** | **32,6 s** (RTF 7,9) |
+
+- **La chaîne fonctionne de bout en bout.** C'est la première exécution
+  complète avec les vrais modèles. La précédente
+  ([exécution 37448380914](https://github.com/LOSTHADY/IA_Project-/actions/runs/37448380914))
+  avait révélé deux défauts, corrigés depuis : l'appel au LLM cassé par
+  transformers 5, et un LLM par défaut (gemma) verrouillé derrière une
+  licence à accepter.
+- **Trop lente pour converser, en l'état** : 33 s par tour, dont la moitié
+  pour le LLM. Ces temps sont ceux de PyTorch fp32 ; le déploiement prévoit
+  NLLB en int8 et le LLM quantifié (`docs/DEPLOIEMENT.md`), à mesurer sur
+  la machine cible.
+- **Les erreurs se propagent jusqu'à la réponse** : « e ma den sɔrɔ » est
+  reconnu « a den sɔn », traduit « il a donné son fils », et le LLM répond
+  « Il a donné son fils ». Un énoncé déclenche aussi une boucle de NLLB
+  vers le français (« de milliers de milliers… »), bornée par le plafond.
+- **Jeli-ASR ne permet pas de juger le dialogue** : ce sont des récits, pas
+  des demandes adressées à un assistant, et le LLM les reformule plus qu'il
+  n'y répond. La qualité des réponses se jugera sur le jeu maison, dont les
+  consignes sont des situations d'usage (`data/testset/consignes.json`).
+  Aucun tour n'a été résolu par gabarit (3 gabarits seulement).
+
 ### Limites
 
 - **Latences mesurées sur les processeurs de GitHub, en PyTorch fp32** :

@@ -217,7 +217,7 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 | 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
 | 3 | Fine-tuning Whisper + NLLB | scripts testés de bout en bout sur petits modèles, notebook prêt |
 | 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
-| 5 | Assemblage CPU, quantisation, démo | outillage prêt et testé ; à mesurer sur la machine cible |
+| 5 | Assemblage CPU, quantisation, démo | chaîne complète validée avec les vrais modèles (zero-shot, 33 s par tour en fp32) ; int8 à mesurer sur la machine cible |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
 défendable. Voir [`docs/COLLECTE.md`](docs/COLLECTE.md) pour le protocole et
