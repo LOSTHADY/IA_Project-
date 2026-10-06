@@ -237,4 +237,10 @@ def test_chaine_complete_sur_cpu(cpu):
     _, e_series = load_series(e_path)
     assert {"WER strict", "chrF++ (depuis ASR)"} <= set(c_series)
     res = bootstrap([c_series["chrF++ (depuis ASR)"], e_series["chrF++ (depuis ASR)"]], n_boot=20)
-    assert res["n"] == 3
+    assert res["n"] == 3 and res["unite"] == "enonce"  # échantillon sans locuteurs
+
+    # Et à l'analyse d'erreurs.
+    from eval.analysis import analyse_report
+
+    assert {"asr", "mt_depuis_asr"} <= set(analyse_report(c_path)[1])
+    assert "e2e" in analyse_report(e_path)[1]

@@ -3,8 +3,8 @@
     python -m eval.analysis eval/results/*.json
 
 Les scores disent combien un système se trompe ; cette analyse dit comment.
-Pour chaque rapport de eval.baselines, elle lit ses sorties ligne à ligne
-(`.details.jsonl`) :
+Pour chaque rapport de eval.baselines ou de eval.run_eval, elle lit ses
+sorties ligne à ligne (`.details.jsonl`) :
 
 - **ASR** : erreurs décomposées en substitutions, suppressions et insertions ;
   part des substitutions purement orthographiques (bɛ → be) ; hallucinations
@@ -13,6 +13,10 @@ Pour chaque rapport de eval.baselines, elle lit ses sorties ligne à ligne
 - **Traduction** : chrF++ selon la longueur ; sorties vides, trop courtes ou
   trop longues ; phrases recopiées sans être traduites.
 - **Exemples** : meilleur, médian et pire énoncé, pour illustrer le mémoire.
+- **Sous-groupes** (jeu maison, eval.run_eval) : WER et chrF++ par registre
+  (lu / spontané), code-switching, conditions d'enregistrement, genre et
+  locuteur. Descriptif seulement : deux groupes n'ont ni les mêmes énoncés ni
+  les mêmes voix, leur écart n'est pas un test.
 
 Tout est calculé au niveau du corpus, comme les scores, et dans la même
 normalisation (eval.metrics).
@@ -29,11 +33,14 @@ import numpy as np
 
 from bambara_voice.normalize import fold, normalize, strip_punctuation
 
-from .significance import chrf_stats, corpus_score
+from .significance import chrf_stats, corpus_score, wer_stats
 
 LENGTH_BUCKETS = ((1, 3), (4, 7), (8, 15), (16, 10_000))
 HALLUCINATION_RATIO = 2.0   # sortie au moins deux fois plus longue que la référence
 REPEAT_NGRAM, REPEAT_MIN = 3, 3
+# Champs du jeu de test (eval.dataset) par lesquels découper les scores.
+GROUPS = (("register", "registre"), ("code_switching", "code-switching"),
+          ("conditions", "conditions"), ("gender", "genre"), ("speaker", "locuteur"))
 
 
 def _strict(text: str) -> str:
@@ -175,6 +182,46 @@ def mt_analysis(rows: list[dict], src_key: str, hyp_key: str, ref_key: str) -> d
     }
 
 
+# --- sous-groupes -------------------------------------------------------------
+
+def _group_value(field: str, value) -> str:
+    if field == "code_switching":
+        return "avec" if value else "sans"
+    return str(value)
+
+
+def group_scores(rows: list[dict], hyp_bm: str | None, ref_bm: str,
+                 hyp_fr: str, ref_fr: str) -> dict:
+    """WER (si la variante transcrit) et chrF++ par valeur de chaque champ de
+    GROUPS qui en prend au moins deux. Scores de corpus, dans la même
+    normalisation que eval.metrics."""
+    out = {}
+    for field, label in GROUPS:
+        members: dict[str, list[dict]] = {}
+        for r in rows:
+            if r.get(field) not in (None, ""):
+                members.setdefault(_group_value(field, r[field]), []).append(r)
+        if len(members) < 2:
+            continue
+        table = {}
+        for value, group in sorted(members.items()):
+            entry: dict = {"n": len(group)}
+            speakers = {g["speaker"] for g in group if g.get("speaker")}
+            if speakers:
+                entry["locuteurs"] = len(speakers)
+            bm = [g for g in group if hyp_bm and _strict(g.get(ref_bm, ""))]
+            if bm:
+                entry["wer"] = corpus_score("wer", wer_stats(
+                    [g.get(hyp_bm) or "" for g in bm], [g[ref_bm] for g in bm]).sum(axis=0))
+            fr = [g for g in group if (g.get(ref_fr) or "").strip()]
+            if fr:
+                entry["chrf"] = corpus_score("chrf", chrf_stats(
+                    [g.get(hyp_fr) or "" for g in fr], [g[ref_fr] for g in fr]).sum(axis=0))
+            table[value] = entry
+        out[label] = table
+    return out
+
+
 # --- lecture des rapports et présentation -------------------------------------
 
 def analyse_report(path: Path) -> tuple[str, dict]:
@@ -193,6 +240,16 @@ def analyse_report(path: Path) -> tuple[str, dict]:
     elif maillon == "mt":
         out["bm_fr"] = mt_analysis(rows, "ref_bm", "hyp_fr", "ref_fr")
         out["fr_bm"] = mt_analysis(rows, "ref_fr", "hyp_bm", "ref_bm")
+    elif maillon is None and arch in ("cascade", "e2e"):  # eval.run_eval
+        hyp_bm = "source_bm" if arch == "cascade" else None
+        if hyp_bm:
+            out["asr"] = asr_analysis(rows, hyp_bm, "ref_transcript_bm")
+        out["mt_depuis_asr" if hyp_bm else "e2e"] = mt_analysis(
+            rows, "ref_transcript_bm", "source_fr", "ref_translation_fr")
+        groups = group_scores(rows, hyp_bm, "ref_transcript_bm", "source_fr",
+                              "ref_translation_fr")
+        if groups:
+            out["par_groupe"] = groups
     return name, out
 
 
@@ -244,7 +301,27 @@ def to_markdown(name: str, analysis: dict) -> str:
                 "",
             ]
             lines += _example_lines(m["exemples"], "chrF++", negate=True)
+    if analysis.get("par_groupe"):
+        lines += _group_lines(analysis["par_groupe"])
     return "\n".join(lines)
+
+
+def _group_lines(groups: dict) -> list[str]:
+    entries = [e for table in groups.values() for e in table.values()]
+    with_wer = any("wer" in e for e in entries)
+    lines = ["**Par sous-groupe** — descriptif : deux groupes n'ont ni les mêmes énoncés ni "
+             "les mêmes voix, leur écart n'est pas un test.", "",
+             "| Sous-groupe | Énoncés | Locuteurs |" + (" WER strict |" if with_wer else "")
+             + " chrF++ |",
+             "|---|---|---|" + ("---|" if with_wer else "") + "---|"]
+    for label, table in groups.items():
+        for value, e in table.items():
+            row = f"| {label} : {value} | {e['n']} | {e.get('locuteurs', '—')} |"
+            if with_wer:
+                row += f" {_pct(e['wer']) if 'wer' in e else '—'} |"
+            row += f" {e['chrf']:.1f} |" if "chrf" in e else " — |"
+            lines.append(row)
+    return lines + [""]
 
 
 def _example_lines(examples: dict, metric: str, negate: bool = False) -> list[str]:

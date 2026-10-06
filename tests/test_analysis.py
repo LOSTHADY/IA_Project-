@@ -90,3 +90,54 @@ def test_cli_rapports_asr_et_mt(tmp_path, capsys):
     saved = json.loads(out_json.read_text(encoding="utf-8"))
     assert set(saved) == {"MMS", "NLLB"}
     assert saved["NLLB"]["fr_bm"]["chrf"] == pytest.approx(100)
+
+
+def _run_eval_rows(e2e: bool = False) -> list[dict]:
+    """Sorties de eval.run_eval sur le jeu maison, avec ses métadonnées."""
+    rows = []
+    for i, r in enumerate(ASR_ROWS):
+        rows.append({
+            "item": f"bv-{i:04d}", "source_bm": "" if e2e else r["hyp_bm"],
+            "source_fr": "bonjour" if i % 2 else "il est là",
+            "ref_transcript_bm": r["ref_bm"], "ref_translation_fr": "bonjour",
+            "speaker": f"spk-0{i % 2}", "gender": "f", "register": "lu" if i < 2 else "spontane",
+            "code_switching": i == 4, "conditions": "salle calme",
+        })
+    return rows
+
+
+def test_rapport_run_eval_et_sous_groupes(tmp_path, capsys):
+    rows = _run_eval_rows()
+    path = _report(tmp_path / "cascade-20261006.json", {"architecture": "cascade"}, rows)
+    name, a = analysis.analyse_report(path)
+    assert name == "cascade-20261006"
+    assert a["asr"]["wer"] == pytest.approx(asr_analysis(ASR_ROWS)["wer"])
+    assert a["mt_depuis_asr"]["n"] == 5
+
+    groups = a["par_groupe"]
+    # Un champ qui ne prend qu'une valeur (genre, conditions) n'apprend rien.
+    assert set(groups) == {"registre", "code-switching", "locuteur"}
+    lu = ASR_ROWS[:2]
+    assert groups["registre"]["lu"] == {
+        "n": 2, "locuteurs": 2, "chrf": pytest.approx(score_mt(["il est là", "bonjour"],
+                                                               ["bonjour"] * 2).chrf),
+        "wer": pytest.approx(score_asr([r["hyp_bm"] for r in lu], [r["ref_bm"] for r in lu]).wer)}
+    assert groups["code-switching"]["avec"]["n"] == 1
+    assert groups["locuteur"]["spk-00"]["n"] == 3
+
+    analysis.main([str(path)])
+    out = capsys.readouterr().out
+    assert "**Par sous-groupe**" in out and "| registre : spontane | 3 | 2 |" in out
+    assert "| Sous-groupe | Énoncés | Locuteurs | WER strict | chrF++ |" in out
+
+
+def test_rapport_run_eval_bout_en_bout(tmp_path, capsys):
+    path = _report(tmp_path / "e2e-20261006.json", {"architecture": "e2e"},
+                   _run_eval_rows(e2e=True))
+    _, a = analysis.analyse_report(path)
+    assert set(a) == {"e2e", "par_groupe"}
+    assert all("wer" not in e for t in a["par_groupe"].values() for e in t.values())
+    analysis.main([str(path)])
+    out = capsys.readouterr().out
+    assert "Traduction directe (bout-en-bout)" in out
+    assert "| Sous-groupe | Énoncés | Locuteurs | chrF++ |" in out

@@ -145,6 +145,31 @@ pas établi, quelle que soit sa taille apparente. Pour la synthèse, le MOS
 (`eval.mos`) a lui aussi son IC, par bootstrap sur les phrases, car les
 notes d'une même phrase ne sont pas indépendantes.
 
+**Tirer les locuteurs, pas les énoncés.** Le même raisonnement vaut pour le
+jeu maison : chaque locuteur y enregistre une trentaine d'énoncés, qui
+partagent sa voix, son débit et son micro. Les tirer un par un reviendrait à
+supposer 300 voix indépendantes là où il n'y en a que 10, et donnerait des
+IC trop étroits. Sur ce jeu, `eval.significance` tire donc des locuteurs avec
+remise, chacun avec tous ses énoncés (bootstrap par grappes, Field et
+Welsh, 2007). Le test reste apparié : un même tirage de locuteurs sert à
+toutes les variantes. C'est automatique dès que les sorties portent un
+locuteur (`--unite auto`). Sur un jeu synthétique où chaque voix a son
+propre taux d'erreur (10 locuteurs, 12 énoncés chacun), l'IC tiré par
+locuteur est 3,3 fois plus large que l'IC tiré par énoncé
+(`tests/test_significance.py`). Les chiffres de la phase 1 (Jeli-ASR, sans
+locuteur dans les sorties) restent tirés par énoncé.
+
+Conséquence pour la collecte : à nombre d'énoncés égal, **plus de
+locuteurs** resserre l'IC davantage que plus d'énoncés par locuteur (voir
+`docs/COLLECTE.md`, §3).
+
+**Sous-groupes.** `eval.analysis` découpe aussi les scores du jeu maison par
+registre (lu / spontané), code-switching, conditions d'enregistrement, genre
+et locuteur. Ces chiffres décrivent : deux sous-groupes n'ont ni les mêmes
+énoncés ni les mêmes voix, et leur écart n'est pas un test. Un locuteur
+nettement à part y apparaît aussi (micro défectueux, transcription à
+revoir).
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source
@@ -183,6 +208,8 @@ avancer en parallèle ; elle, non.
 - Bayelemabaga (RobotsMaliAI) — <https://huggingface.co/datasets/RobotsMaliAI/bayelemabaga>
 - Koehn, P. — *Statistical Significance Tests for Machine Translation
   Evaluation* — EMNLP 2004 — <https://aclanthology.org/W04-3250/>
+- Field, C. A. et Welsh, A. H. — *Bootstrapping Clustered Data* — Journal
+  of the Royal Statistical Society, série B, 69(3), 2007
 - Kunnafonidilaw ka Cadeau, ASR dataset de bambara contemporain —
   <https://arxiv.org/html/2512.19400>
 - Manding Language Tech Resources (An ka taa) —

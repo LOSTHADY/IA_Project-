@@ -74,6 +74,52 @@ def test_bootstrap_aligne_sur_les_enonces_communs():
         bootstrap([a, Series("c", "wer", ["9"], wer_stats(["x"], ["y"]))], n_boot=10)
 
 
+# --- tirage par locuteur ------------------------------------------------------
+
+def _voices(n_speakers: int = 10, per_speaker: int = 12) -> Series:
+    """Chaque locuteur a son propre taux d'erreur, identique sur tous ses
+    énoncés : l'effet locuteur à l'état pur."""
+    rates = np.linspace(0.1, 0.9, n_speakers)
+    stats = np.array([[round(10 * r), 10] for r in rates for _ in range(per_speaker)], float)
+    speakers = [f"spk-{k:02d}" for k in range(n_speakers) for _ in range(per_speaker)]
+    return Series("WER strict", "wer", [str(i) for i in range(len(stats))], stats, speakers)
+
+
+def _width(entry) -> float:
+    return entry["ic"][1] - entry["ic"][0]
+
+
+def test_tirage_par_locuteur_elargit_l_ic_quand_les_voix_different():
+    voices = _voices()
+    by_utt = bootstrap([voices], n_boot=500, unit="enonce")
+    by_spk = bootstrap([voices], n_boot=500)  # auto : les locuteurs sont connus
+    assert by_spk["unite"] == "locuteur" and by_spk["n_unites"] == 10
+    assert by_utt["unite"] == "enonce" and by_utt["n_unites"] == 120
+    assert by_spk["systemes"][0]["score"] == pytest.approx(by_utt["systemes"][0]["score"])
+    # 120 énoncés mais seulement 10 voix : l'IC honnête est bien plus large.
+    assert _width(by_spk["systemes"][0]) > 2 * _width(by_utt["systemes"][0])
+
+
+def test_tirage_par_enonce_inchange():
+    """Sans locuteurs, `auto` tire les énoncés exactement comme avant : les
+    IC de la phase 1 restent reproductibles."""
+    voices = _voices()
+    anonymous = Series(voices.label, voices.kind, voices.ids, voices.stats)
+    assert bootstrap([anonymous], n_boot=200) == bootstrap([voices], n_boot=200, unit="enonce")
+
+
+def test_tirage_par_locuteur_exige_des_locuteurs_coherents():
+    voices = _voices()
+    anonymous = Series(voices.label, voices.kind, voices.ids, voices.stats)
+    with pytest.raises(ValueError, match="ne disent pas qui parle"):
+        bootstrap([anonymous], n_boot=10, unit="locuteur")
+    shuffled = Series("b", "wer", voices.ids, voices.stats, list(reversed(voices.speakers)))
+    with pytest.raises(ValueError, match="mêmes locuteurs"):
+        bootstrap([voices, shuffled], n_boot=10, unit="locuteur")
+    with pytest.raises(ValueError, match="unité inconnue"):
+        bootstrap([voices], n_boot=10, unit="phrase")
+
+
 # --- lecture des rapports -----------------------------------------------------
 
 def _report(path: Path, report: dict, rows: list[dict]) -> Path:
@@ -110,6 +156,7 @@ def test_series_des_rapports_baselines_et_run_eval(tmp_path):
          "ref_translation_fr": fr} for i, (h, r, f, fr) in enumerate(zip(HYPS, REFS, FR_H, FR_R))])
     name, series = load_series(run_eval)
     assert name == "cascade" and series["chrF++ (depuis ASR)"].ids[0] == "bv-0"
+    assert series["WER strict"].speakers is None  # pas de locuteur dans ces sorties
 
     mt = _report(tmp_path / "m.json", {"nom": "nllb", "architecture": "traduction",
                                        "maillon": "mt"},
@@ -136,6 +183,19 @@ def test_cli_compare_cascade_et_bout_en_bout(tmp_path, capsys):
 
     with pytest.raises(SystemExit, match="introuvables"):
         significance.main([str(tmp_path / "c.json"), "--noms", "inconnu"])
+
+
+def test_cli_jeu_maison_tire_les_locuteurs(tmp_path, capsys):
+    rows = [{"item": f"bv-{i}", "source_bm": h, "source_fr": f, "ref_transcript_bm": r,
+             "ref_translation_fr": fr, "speaker": f"spk-0{i % 3}"}
+            for i, (h, r, f, fr) in enumerate(zip(HYPS, REFS, FR_H, FR_R))]
+    path = _report(tmp_path / "cascade.json", {"architecture": "cascade"}, rows)
+    assert load_series(path)[1]["WER strict"].speakers[:2] == ["spk-00", "spk-01"]
+    significance.main([str(path), "--n-boot", "50"])
+    out = capsys.readouterr().out
+    assert "en tirant les locuteurs (3)" in out and "Moins de 8 locuteurs" in out
+    significance.main([str(path), "--n-boot", "50", "--unite", "enonce"])
+    assert "en tirant les énoncés" in capsys.readouterr().out
 
 
 # --- MOS ----------------------------------------------------------------------

@@ -19,6 +19,15 @@ statistiques additives par énoncé (erreurs et mots de référence pour le WER 
 n-grammes de caractères et de mots pour chrF++). On ne fait donc pas de
 moyenne de scores par phrase, qui donnerait une autre métrique.
 
+**Unité de tirage.** Sur le jeu maison, chaque locuteur enregistre des
+dizaines d'énoncés : ses énoncés se ressemblent (voix, débit, micro), ils ne
+sont pas indépendants. Tirer les énoncés un par un ferait comme si l'on avait
+autant de voix que d'énoncés, et donnerait des IC trop étroits. Avec
+`--unite locuteur`, on tire donc des *locuteurs* avec remise, chacun avec
+tous ses énoncés (bootstrap par grappes). C'est le choix par défaut (`auto`)
+dès que toutes les sorties portent un locuteur. En dessous de 8 locuteurs,
+ces IC sont eux-mêmes peu fiables : le tableau le signale.
+
 Le premier système nommé sert de référence : chaque autre est comparé à lui.
 """
 
@@ -34,6 +43,8 @@ import numpy as np
 from bambara_voice.normalize import fold, normalize, strip_punctuation
 
 LOWER_IS_BETTER = {"WER strict", "WER relâché"}
+UNITS = ("auto", "enonce", "locuteur")
+MIN_CLUSTERS = 8  # même seuil que eval.dataset.MIN_SPEAKERS
 
 
 @dataclass
@@ -44,6 +55,7 @@ class Series:
     kind: str             # "wer" ou "chrf"
     ids: list[str]
     stats: np.ndarray     # (énoncés, k), additives
+    speakers: list[str] | None = None  # locuteur de chaque énoncé, s'il est connu
 
     def score(self, summed: np.ndarray) -> float:
         return corpus_score(self.kind, summed)
@@ -112,7 +124,9 @@ def _series(label, kind, rows, id_key, hyp_key, ref_key, folded=False) -> Series
     refs = [r[ref_key] for r in rows]
     stats = wer_stats(hyps, refs, folded) if kind == "wer" else chrf_stats(
         [fold(h) for h in hyps] if folded else hyps, [fold(r) for r in refs] if folded else refs)
-    return Series(label, kind, [str(r[id_key]) for r in rows], stats)
+    speakers = [str(r.get("speaker") or "") for r in rows]
+    return Series(label, kind, [str(r[id_key]) for r in rows], stats,
+                  speakers if all(speakers) else None)
 
 
 def load_series(report_path: str | Path) -> tuple[str, dict[str, Series]]:
@@ -158,25 +172,55 @@ def _percentiles(values: np.ndarray, alpha: float) -> tuple[float, float]:
     return float(lo), float(hi)
 
 
-def _boot_scores(series: Series, positions: np.ndarray, samples: np.ndarray) -> np.ndarray:
-    stats = series.stats[positions]
-    return np.array([series.score(stats[s].sum(axis=0)) for s in samples])
+def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np.ndarray]:
+    """Unité de tirage effective, et l'unité de chaque énoncé commun."""
+    speakers = systems[0].speakers
+    if unit == "auto":
+        unit = "locuteur" if all(s.speakers for s in systems) else "enonce"
+    if unit == "enonce":
+        return unit, np.arange(len(common))
+    if not speakers:
+        raise ValueError("tirage par locuteur impossible : les sorties ne disent pas qui parle "
+                         "(champ speaker du jeu de test)")
+    by_id = dict(zip(systems[0].ids, speakers))
+    for s in systems[1:]:
+        other = dict(zip(s.ids, s.speakers or []))
+        if any(other.get(i, by_id[i]) != by_id[i] for i in common):
+            raise ValueError(f"« {s.label} » n'attribue pas les énoncés aux mêmes locuteurs")
+    labels = sorted({by_id[i] for i in common})
+    index = {spk: k for k, spk in enumerate(labels)}
+    return unit, np.array([index[by_id[i]] for i in common])
 
 
 def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
-              alpha: float = 0.05) -> dict:
+              alpha: float = 0.05, unit: str = "auto") -> dict:
     """IC de chaque système et test apparié de chacun contre le premier, sur
-    les énoncés communs à tous."""
+    les énoncés communs à tous. `unit` : ce que l'on tire avec remise, les
+    énoncés ou les locuteurs (« auto » : les locuteurs s'ils sont connus)."""
+    if unit not in UNITS:
+        raise ValueError(f"unité inconnue : {unit} ; possibles : {UNITS}")
     common = sorted(set.intersection(*(set(s.ids) for s in systems)))
     if not common:
         raise ValueError("aucun énoncé commun : les rapports portent sur des échantillons différents")
     positions = [np.array([s.ids.index(i) for i in common]) for s in systems]
-    rng = np.random.default_rng(seed)
-    samples = rng.integers(0, len(common), size=(n_boot, len(common)))
+    unit, unit_of = _units(systems, common, unit)
+    n_units = int(unit_of.max()) + 1
 
-    boots = [_boot_scores(s, pos, samples) for s, pos in zip(systems, positions)]
-    observed = [s.score(s.stats[pos].sum(axis=0)) for s, pos in zip(systems, positions)]
-    out = {"n": len(common), "n_boot": n_boot, "systemes": []}
+    # Statistiques additives : celles d'un locuteur sont la somme de celles de
+    # ses énoncés, et un tirage se calcule sur ces sommes.
+    per_unit = []
+    for s, pos in zip(systems, positions):
+        agg = np.zeros((n_units, s.stats.shape[1]))
+        np.add.at(agg, unit_of, s.stats[pos])
+        per_unit.append(agg)
+
+    rng = np.random.default_rng(seed)
+    samples = rng.integers(0, n_units, size=(n_boot, n_units))
+    boots = [np.array([s.score(agg[smp].sum(axis=0)) for smp in samples])
+             for s, agg in zip(systems, per_unit)]
+    observed = [s.score(agg.sum(axis=0)) for s, agg in zip(systems, per_unit)]
+    out = {"n": len(common), "n_boot": n_boot, "unite": unit, "n_unites": n_units,
+           "systemes": []}
     for i, s in enumerate(systems):
         entry = {"score": observed[i], "ic": _percentiles(boots[i], alpha)}
         if i > 0:
@@ -218,7 +262,14 @@ def to_markdown(names: list[str], results: dict[str, dict], alpha: float = 0.05)
         if label in LOWER_IS_BETTER:
             notes.append(label)
     lines.append("")
-    text = f"Entre crochets : IC à {conf} par bootstrap ({res['n_boot']} tirages)."
+    text = f"Entre crochets : IC à {conf} par bootstrap ({res['n_boot']} tirages"
+    if res["unite"] == "locuteur":
+        text += f", en tirant les locuteurs ({res['n_unites']}) avec tous leurs énoncés)."
+        if res["n_unites"] < MIN_CLUSTERS:
+            text += (f" **Moins de {MIN_CLUSTERS} locuteurs : ces intervalles sont peu fiables "
+                     f"(trop étroits).**")
+    else:
+        text += ", en tirant les énoncés)."
     if len(names) > 1:
         text += (f" Écarts mesurés par rapport à « {names[0]} », sur les mêmes énoncés ; "
                  f"n.s. : l'IC de l'écart contient zéro.")
@@ -236,6 +287,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="systèmes à comparer, dans l'ordre (le premier sert de référence)")
     p.add_argument("--n-boot", type=int, default=1000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--unite", choices=UNITS, default="auto",
+                   help="unité tirée avec remise : énoncés ou locuteurs (auto : locuteurs "
+                        "si toutes les sorties en portent un)")
     args = p.parse_args(argv)
 
     loaded = [load_series(path) for path in args.reports
@@ -254,8 +308,11 @@ def main(argv: list[str] | None = None) -> None:
     if not labels:
         raise SystemExit("aucune métrique commune à tous les rapports")
     by_label = {label: [series[label] for _, series in loaded] for label in labels}
-    results = {label: bootstrap(systems, args.n_boot, args.seed)
-               for label, systems in by_label.items()}
+    try:
+        results = {label: bootstrap(systems, args.n_boot, args.seed, unit=args.unite)
+                   for label, systems in by_label.items()}
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print(to_markdown(names, results))
 
 

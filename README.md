@@ -113,8 +113,12 @@ d'erreurs entre l'ASR et le reste de la chaîne, latence par étape, RTF, et
 taux de couverture des gabarits.
 
 ```bash
-# Un écart est-il réel ? IC à 95 % et test apparié (bootstrap)
-python -m eval.significance eval/results/*.json --noms "cascade" "bout-en-bout"
+# Un écart est-il réel ? IC à 95 % et test apparié (bootstrap). Sur le jeu
+# maison, on tire les locuteurs plutôt que les énoncés (METHODE.md, §5).
+python -m eval.significance eval/results/*.json --noms cascade e2e
+# Comment chaque système se trompe, et sur quels sous-groupes
+# (lu / spontané, code-switching, conditions, genre, locuteur)
+python -m eval.analysis eval/results/*.json
 # MOS de la synthèse, à partir des grilles remplies par les auditeurs
 python -m eval.mos eval/results/tts-*/mos*.csv
 ```

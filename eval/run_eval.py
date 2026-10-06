@@ -62,7 +62,12 @@ def evaluate(
         traces.append(trace)
         rows.append({"item": item.id, **trace.to_dict(),
                      "ref_transcript_bm": item.transcript_bm,
-                     "ref_translation_fr": item.translation_fr})
+                     "ref_translation_fr": item.translation_fr,
+                     # Pour les IC par locuteur (eval.significance) et les
+                     # scores par sous-groupe (eval.analysis).
+                     "speaker": item.speaker, "gender": item.gender,
+                     "register": item.register, "code_switching": item.code_switching,
+                     "conditions": item.extra.get("conditions", "")})
         logger.info("[%d/%d] %s — RTF %.2f", idx, len(items), item.id, trace.rtf)
 
     if not traces:

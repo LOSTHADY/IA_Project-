@@ -53,6 +53,17 @@ et 10 lus**. Dix locuteurs donnent ainsi environ 300 énoncés, au milieu de
 la cible de 200 à 500. Aucun locuteur ne doit dépasser 20 % du total :
 l'onglet « Avancement » le signale.
 
+**Si l'on peut recruter davantage, mieux vaut plus de locuteurs que plus
+d'énoncés par locuteur.** Les énoncés d'une même voix se ressemblent : les
+intervalles de confiance se calculent en tirant les locuteurs, pas les
+énoncés (`docs/METHODE.md`, §5). À 300 énoncés, 15 locuteurs × 20 énoncés
+donnent donc des intervalles plus serrés que 10 × 30. Ordre de grandeur, avec
+l'effet de grappe classique (1 + (m − 1) ρ, où m est le nombre d'énoncés par
+locuteur et ρ leur corrélation, supposée ici à 0,1 pour l'illustration) :
+300 énoncés valent environ 77 énoncés indépendants avec 10 locuteurs, 103
+avec 15, 125 avec 20. La valeur réelle de ρ se lira sur le jeu une fois
+collecté.
+
 **Spontané.** L'application propose une situation (`data/testset/consignes.json`) :
 saluer, demander un prix, signaler une panne de réseau, etc. L'opérateur
 l'explique, en bambara si possible, et le locuteur **parle à l'assistant
