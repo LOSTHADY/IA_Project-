@@ -37,9 +37,11 @@ modèle** que celui de l'évaluation, simplement quantifié.
 pip install llama-cpp-python
 ```
 
-Télécharger une version GGUF de `google/gemma-3-1b-it` depuis le Hub
-(chercher « gemma-3-1b-it GGUF »), en quantification Q4_K_M ou Q4_0, et la
-placer dans `modeles-cpu/`. Puis relancer la conversion avec
+Télécharger une version GGUF du LLM par défaut,
+`Qwen/Qwen2.5-1.5B-Instruct`, depuis le Hub (chercher
+« Qwen2.5-1.5B-Instruct GGUF »), en quantification Q4_K_M ou Q4_0, et la
+placer dans `modeles-cpu/`. (`google/gemma-3-1b-it` convient aussi, mais
+son téléchargement exige un compte Hugging Face qui a accepté sa licence.) Puis relancer la conversion avec
 `--llm-gguf nom-du-fichier.gguf`, ou ajouter à `config.json` :
 
 ```json

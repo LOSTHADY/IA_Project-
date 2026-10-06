@@ -82,7 +82,10 @@ class LLMConfig:
     """
 
     backend: Literal["transformers", "llamacpp", "echo"] = "transformers"
-    model_id: str = "google/gemma-3-1b-it"
+    # Ouvert, téléchargeable sans compte. google/gemma-3-1b-it, essayé
+    # d'abord, exige d'accepter sa licence sur Hugging Face et un jeton
+    # (HF_TOKEN) : sans cela, son téléchargement échoue (401).
+    model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
     gguf_path: str | None = None  # requis si backend == "llamacpp"
     max_new_tokens: int = 96
     temperature: float = 0.3

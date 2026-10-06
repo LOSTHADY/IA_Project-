@@ -39,8 +39,20 @@ L'inférence tourne sur CPU. L'entraînement se fait sur Colab (cf. `scripts/`).
 
 ## Utilisation
 
+Tant que les modèles ne sont pas affinés (phase 3), utiliser la
+configuration zero-shot : `--config configs/zero-shot.json`. Elle prend MMS
+pour la reconnaissance, car Whisper non affiné n'écrit pas le bambara (WER
+160 %, `docs/RESULTATS.md`). La qualité reste celle des modèles non
+affinés : médiocre. Premier lancement : environ 8 Go de modèles à
+télécharger.
+
 ```bash
 # Vérifier que les composants se chargent
+python -m bambara_voice.cli --config configs/zero-shot.json check
+python -m bambara_voice.cli --config configs/zero-shot.json text "i ni sɔgɔma"
+python app/gradio_app.py --config configs/zero-shot.json
+
+# Configuration par défaut (Whisper) : pour les modèles affinés
 python -m bambara_voice.cli check
 
 # Un tour de parole, en partant du texte (sans ASR)

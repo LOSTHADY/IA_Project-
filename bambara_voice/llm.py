@@ -167,26 +167,29 @@ class ChatModel:
 
         msgs = self._messages(user_text_fr, history)
         try:
-            prompt_ids = self._tokenizer.apply_chat_template(
-                msgs, add_generation_prompt=True, return_tensors="pt"
-            ).to(self.device)
+            # Toujours un dictionnaire (input_ids, attention_mask) : selon la
+            # version de transformers, sans return_dict, on reçoit un tenseur
+            # ou déjà un dictionnaire.
+            inputs = self._tokenizer.apply_chat_template(
+                msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
+            )
         except (ValueError, AttributeError):
             # Modèle sans gabarit de chat : repli sur une mise en forme simple.
             flat = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
-            prompt_ids = self._tokenizer(
-                flat + "\nassistant:", return_tensors="pt"
-            ).input_ids.to(self.device)
+            inputs = self._tokenizer(flat + "\nassistant:", return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        sampling = self.config.temperature > 0
         with torch.no_grad():
             out = self._model.generate(
-                prompt_ids,
+                **inputs,
                 max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.temperature > 0,
-                temperature=max(self.config.temperature, 1e-4),
-                pad_token_id=self._tokenizer.eos_token_id,
+                do_sample=sampling,
+                **({"temperature": self.config.temperature} if sampling else {}),
+                pad_token_id=self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
             )
         # Ne décoder que ce qui a été ajouté au prompt.
-        new_tokens = out[0][prompt_ids.shape[-1]:]
+        new_tokens = out[0][inputs["input_ids"].shape[-1]:]
         return self._tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def _reply_llamacpp(self, user_text_fr: str, history: list[dict] | None) -> str:

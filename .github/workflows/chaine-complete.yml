@@ -17,7 +17,9 @@ on:
         default: "10"
   push:
     branches: [claude/chat-ia-bambara-dho8oa]
-    paths: [.github/workflows/chaine-complete.yml, configs/zero-shot.json]
+    # Aussi à chaque changement de la chaîne : seul ce test fait tourner les
+    # vrais modèles (les tests unitaires utilisent des modèles minuscules).
+    paths: [.github/workflows/chaine-complete.yml, "configs/**", "bambara_voice/**"]
 
 permissions:
   contents: read

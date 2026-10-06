@@ -3,7 +3,7 @@
     python scripts/export_cpu.py --out modeles-cpu \\
         --whisper ckpt/whisper-small-bm \\
         --nllb-bm2fr ckpt/nllb-bm2fr --nllb-fr2bm ckpt/nllb-fr2bm \\
-        --llm-gguf modeles-cpu/gemma-3-1b-it-Q4_K_M.gguf
+        --llm-gguf modeles-cpu/qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 Convertit Whisper et NLLB au format CTranslate2, quantifiés en int8 (poids
 4 fois plus légers ; NLLB 2 à 2,5 fois plus rapide, Whisper 1,3 à 1,5 fois

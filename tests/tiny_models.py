@@ -128,3 +128,34 @@ def nllb(out: Path) -> Path:
     )
     M2M100ForConditionalGeneration(cfg).save_pretrained(out)
     return out
+
+
+CHAT_TEMPLATE = ("{% for m in messages %}{{ m['role'] }}: {{ m['content'] }}\n{% endfor %}"
+                 "{% if add_generation_prompt %}assistant:{% endif %}")
+
+
+def causal_lm(out: Path, chat_template: bool = True) -> Path:
+    """LM causal (Llama) à 1 couche, tokenizer BPE, avec ou sans gabarit de
+    chat : la plomberie de bambara_voice.llm.ChatModel, de la conversation
+    jusqu'à la génération."""
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+
+    out.mkdir(parents=True, exist_ok=True)
+    tk = Tokenizer(models.BPE(unk_token="<unk>"))
+    tk.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    tk.decoder = decoders.ByteLevel()
+    trainer = trainers.BpeTrainer(vocab_size=300, special_tokens=["<unk>", "<s>", "</s>", "<pad>"],
+                                  initial_alphabet=pre_tokenizers.ByteLevel.alphabet())
+    tk.train_from_iterator([t for pair in PAIRS for t in pair] * 20, trainer)
+    tok = PreTrainedTokenizerFast(tokenizer_object=tk, unk_token="<unk>", bos_token="<s>",
+                                  eos_token="</s>", pad_token="<pad>")
+    if chat_template:
+        tok.chat_template = CHAT_TEMPLATE
+    tok.save_pretrained(out)
+    cfg = LlamaConfig(vocab_size=len(tok), hidden_size=16, intermediate_size=32,
+                      num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+                      max_position_embeddings=512, bos_token_id=tok.bos_token_id,
+                      eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id)
+    LlamaForCausalLM(cfg).save_pretrained(out)
+    return out
