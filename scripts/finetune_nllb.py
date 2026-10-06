@@ -43,6 +43,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lr", type=float, default=3e-5)
     p.add_argument("--max-length", type=int, default=128)
     p.add_argument("--max-samples", type=int, default=None)
+    p.add_argument("--save-steps", type=int, default=500,
+                   help="checkpoint (et évaluation) toutes les N étapes : une session Colab "
+                        "coupée ne perd que le travail depuis le dernier")
+    p.add_argument("--eval-samples", type=int, default=300,
+                   help="phrases de validation évaluées à chaque checkpoint (génération "
+                        "en faisceau : coûteuse)")
     p.add_argument("--resume", action="store_true",
                    help="reprendre au dernier checkpoint de --output s'il existe")
     p.add_argument("--push-to-hub", default=None, metavar="REPO_ID")
@@ -92,6 +98,8 @@ def main() -> None:
         train_raw, eval_raw = ds["train"], ds[eval_key]
     if args.max_samples:
         train_raw = train_raw.select(range(min(args.max_samples, len(train_raw))))
+    if args.eval_samples and len(eval_raw) > args.eval_samples:
+        eval_raw = eval_raw.shuffle(seed=42).select(range(args.eval_samples))
 
     def texts(batch, column):
         # Format WMT (translation = {bam, fr}) ou colonnes plates.
@@ -126,12 +134,15 @@ def main() -> None:
     training_args = Seq2SeqTrainingArguments(
         output_dir=output,
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         num_train_epochs=args.epochs,
         fp16=torch.cuda.is_available(),
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        eval_strategy="steps",
+        eval_steps=args.save_steps,
+        save_strategy="steps",
+        save_steps=args.save_steps,
         save_total_limit=2,
         predict_with_generate=True,
         generation_max_length=args.max_length,

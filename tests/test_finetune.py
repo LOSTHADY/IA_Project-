@@ -69,8 +69,11 @@ def nllb_ft(work):
         outs[direction] = work["root"] / f"nllb-{direction}"
         log = _train("finetune_nllb.py", "--dataset", str(work["text"]),
                      "--model", str(work["nllb"]), "--direction", direction,
+                     "--save-steps", "1", "--eval-samples", "1",
                      "--output", str(outs[direction]))
         assert "translation.bam" in log  # colonne imbriquée détectée
+        # Checkpoints réguliers : une session coupée ne perd pas tout.
+        assert list(outs[direction].glob("checkpoint-*"))
     return outs
 
 
@@ -88,6 +91,38 @@ def test_le_notebook_estime_la_duree_d_apres_l_essai(whisper_ft, capsys):
     exec(code, {"EPOCHS_WHISPER": 1, "EPOCHS_NLLB": 1})
     out = capsys.readouterr().out
     assert "s par étape" in out and "Whisper, 3 époque(s)" in out
+
+
+def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
+    """Session Colab coupée : sans modèle final, le notebook évalue le dernier
+    checkpoint ; sans rien, le modèle d'origine s'il y en a un."""
+    import shutil
+
+    nb = json.loads((ROOT / "notebooks" / "phase3_finetuning.ipynb").read_text(encoding="utf-8"))
+    [cell] = [c for c in nb["cells"] if "".join(c["source"]).startswith("# Modèle final")]
+    code = "".join(cell["source"])
+    code = code[:code.index("WHISPER = ")]  # la fonction seule
+    ns: dict = {}
+    exec(code, ns)
+    modele = ns["modele"]
+
+    assert modele(str(whisper_ft)) == str(whisper_ft)  # modèle final
+    coupe = tmp_path / "coupe"
+    last = sorted(whisper_ft.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))[-1]
+    shutil.copytree(last, coupe / last.name)
+    assert modele(str(coupe)).endswith(last.name)
+    assert "Entraînement inachevé" in capsys.readouterr().out
+    assert modele(str(tmp_path / "rien"), repli="nllb") == "nllb"
+    with pytest.raises(FileNotFoundError):
+        modele(str(tmp_path / "rien"))
+
+    # Le checkpoint se charge comme un modèle : l'évaluation peut s'en servir.
+    from bambara_voice.asr import SpeechRecognizer
+    from bambara_voice.config import ASRConfig
+    import numpy as np
+
+    rec = SpeechRecognizer(ASRConfig(model_id=str(coupe / last.name), max_new_tokens=5))
+    assert isinstance(rec.transcribe(np.zeros(16_000, dtype=np.float32)).text, str)
 
 
 def test_whisper_reprend_au_dernier_checkpoint(work, whisper_ft):
