@@ -222,6 +222,19 @@ def test_cli_plafond_de_longueur(tmp_path, fakes):
     assert mt["modeles"]["plafond_longueur"] == 2.0
     assert set(mt["sorties_coupees"]) == {"bm_fr", "fr_bm"}
 
+    # Sans l'option : le plafond par défaut, sans le signaler dans le nom.
+    sans_option = tmp_path / "defaut"
+    baselines.main(["--out", str(sans_option), "--device", "cpu", "mt", "--dataset", str(bayel)])
+    mt = _report(sans_option, "mt")
+    assert "plafond" not in mt["nom"] and mt["modeles"]["plafond_longueur"] == 2.0
+
+    # --plafond 0 : comme en phase 1.
+    phase1 = tmp_path / "phase1"
+    baselines.main(["--out", str(phase1), "--device", "cpu", "mt", "--dataset", str(bayel),
+                    "--plafond", "0"])
+    mt = _report(phase1, "mt")
+    assert mt["nom"].endswith("[sans plafond]") and mt["modeles"]["plafond_longueur"] is None
+
 
 def test_cli_decoupe_et_phrases_longues(tmp_path, fakes):
     bayel = _bayelemabaga_like(tmp_path / "bayel")

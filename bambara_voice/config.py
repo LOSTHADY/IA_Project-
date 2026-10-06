@@ -65,9 +65,10 @@ class MTConfig:
     backend: Literal["transformers", "ctranslate2"] = "transformers"
     compute_type: str = "int8"
     # Plafond de longueur relatif à la source : au plus ratio × jetons source
-    # + marge. Coupe les boucles de génération (docs/RESULTATS.md, analyse
-    # d'erreurs). None : seul max_new_tokens borne la sortie.
-    max_length_ratio: float | None = None
+    # + marge. Ne coupe que les boucles de génération, gagne 0,1 à 0,9 point
+    # de chrF++ et borne la latence du pire cas (docs/RESULTATS.md, plafond
+    # de longueur). None : seul max_new_tokens borne la sortie (phase 1).
+    max_length_ratio: float | None = 2.0
     max_length_margin: int = 10
 
 

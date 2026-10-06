@@ -156,10 +156,17 @@ Entre parenthèses : nombre de phrases.
 | Sorties dégénérées | trop longues (≥ 2 × la référence) | en boucle |
 |---|---|---|
 | Bayelemabaga, bambara → français | 5,2 % | 1,6 % |
-| Bayelemabaga, français → bambara | 10,4 % | 2,6 % |
+| Bayelemabaga, français → bambara | 10,4 % | 3,0 % |
 | Jeli-ASR, bambara → français | 10,2 % | 2,9 % |
-| Jeli-ASR, français → bambara | 6,7 % | 1,8 % |
+| Jeli-ASR, français → bambara | 6,7 % | 2,0 % |
 | MMS puis NLLB | 11,9 % | 3,4 % |
+
+Une sortie est comptée en boucle quand un même groupe de trois mots y
+revient au moins trois fois, ou qu'un motif de 2 à 12 caractères s'y répète
+au moins quatre fois d'affilée (« Sɔgɔsɔgɔsɔgɔ… », un seul « mot » que le
+premier critère manquait). Analyse refaite avec ce détecteur le 6 octobre
+([exécution 37405802014](https://github.com/LOSTHADY/IA_Project-/actions/runs/37405802014)) :
+seuls les deux taux vers le bambara ont changé.
 
 - **NLLB boucle aussi** : 1,6 à 3,4 % des sorties, et 5 à 12 % font au
   moins deux fois la longueur de la référence. Pire cas : « Le crocodile
@@ -189,14 +196,69 @@ Entre parenthèses : nombre de phrases.
    traiter au décodage, comme le décodage d'origine de Whisper : détecter
    une sortie trop répétitive (taux de compression) et redécoder à
    température plus élevée (Radford et al., 2022).
-2. **NLLB** : mesurer l'effet d'un plafond de longueur générée sur les
-   sorties dégénérées, le chrF++ et la latence. Option `--plafond` de
-   `eval.baselines` (désactivée par défaut), expérience dans le workflow
-   « Plafond de longueur NLLB », sur les mêmes phrases que ci-dessus.
+2. **NLLB** : plafonner la longueur générée. Fait, et activé par défaut :
+   voir la section suivante.
 3. **Levier 2** : expérience directe, les longueurs observées ici ne
    suffisant pas à conclure. Mêmes phrases longues, traduites entières puis
    découpées en segments courts (`eval.baselines mt --decoupe`, workflow
    « Découpage avant traduction »).
+
+### Plafond de longueur de NLLB
+
+Exécution : workflow « Plafond de longueur NLLB », 6 octobre 2026
+([exécution 37398523459](https://github.com/LOSTHADY/IA_Project-/actions/runs/37398523459)),
+comparée phrase par phrase à la phase 1 avec `eval.changes`
+([exécution 37405802049](https://github.com/LOSTHADY/IA_Project-/actions/runs/37405802049)).
+Mêmes phrases que la phase 1 (même corpus, même partition, même graine).
+Une seule valeur, fixée avant la mesure : la traduction compte au plus
+2 × la longueur de la source + 10 jetons, contre 256 jetons fixes en phase 1.
+
+| chrF++ [IC 95 %] | sans plafond (phase 1) | avec plafond | écart [IC 95 %] |
+|---|---|---|---|
+| Bayelemabaga, bambara → français | 21,7 [20,7 ; 22,7] | 21,8 [20,8 ; 22,8] | +0,1 [0,0 ; 0,3] |
+| Bayelemabaga, français → bambara | 25,2 [23,7 ; 26,6] | 25,7 [24,3 ; 26,9] | +0,4 [0,1 ; 0,8] |
+| Bayelemabaga, fr → bm, graphie repliée | 31,9 [30,1 ; 33,4] | 32,5 [30,9 ; 34,0] | +0,6 [0,1 ; 1,1] |
+| Jeli-ASR, bambara → français | 22,4 [21,2 ; 23,4] | 22,6 [21,5 ; 23,6] | +0,2 [0,0 ; 0,5] |
+| Jeli-ASR, français → bambara | 28,9 [27,1 ; 30,5] | 29,8 [28,1 ; 31,2] | +0,9 [0,3 ; 1,5] |
+| Jeli-ASR, fr → bm, graphie repliée | 31,3 [29,3 ; 33,0] | 32,2 [30,4 ; 33,7] | +0,9 [0,3 ; 1,6] |
+
+Test apparié sur les mêmes phrases (bootstrap, 1 000 tirages) : l'IC de
+l'écart exclut zéro dans les six cas (sa borne basse s'arrondit à 0,0 vers
+le français), p entre 0,002 et 0,026.
+
+| Traductions | total | changées | dont arrêtées par le plafond |
+|---|---|---|---|
+| Bayelemabaga, bambara → français | 500 | 4 | 3 |
+| Bayelemabaga, français → bambara | 500 | 6 | 5 |
+| Jeli-ASR, bambara → français | 491 | 5 | 4 |
+| Jeli-ASR, français → bambara | 491 | 8 | 8 |
+
+- **Le plafond ne touche que des boucles.** Il arrête 21 traductions sur
+  1 982 (0,6 à 1,6 % selon le corpus et le sens). Le détecteur reconnaît une
+  boucle dans au moins 83 % d'entre elles, et tous les exemples affichés en
+  sont (« Il m'a parlé, il m'a parlé… », « fiɲɛba fiɲɛba… »,
+  « Sɔgɔsɔgɔ… »). Trois autres traductions ont changé sans être arrêtées :
+  c'étaient aussi des boucles en phase 1, et la recherche en faisceau, bornée
+  plus tôt, a retenu une hypothèse terminée (« Ne tun y'a fɔ ko ne tɛ pikiri
+  kɛ tuguni, ko ne tɛ pikiri kɛ tuguni, … » devient « Ne tun y'a fɔ ko ne tɛ
+  pikiri kɛ tuguni. »).
+- **L'écart revient bien au plafond.** Entre les deux exécutions,
+  transformers (5.17 → 5.18), torch (2.14.0 → 2.14.1) et datasets ont changé
+  de version sans modifier aucune autre traduction.
+- **Le gain est petit mais établi.** Il vient de ce qu'une boucle
+  raccourcie apporte moins de caractères faux au chrF++. Le plafond ne guérit
+  pas les boucles, il les raccourcit : leur part ne baisse presque pas
+  (Bayelemabaga, français → bambara : 3,0 % → 2,8 %).
+- **Latence** : non comparable ici, les deux exécutions ayant tourné sur des
+  machines différentes (celle du 6 octobre, plus lente dans son ensemble).
+  Le plafond borne surtout le pire cas : une boucle pouvait coûter 256
+  étapes de décodage, même pour une phrase de trois mots.
+- **Décision : plafond activé par défaut** (`MTConfig.max_length_ratio`),
+  dans la chaîne comme dans l'évaluation. Une seule valeur, fixée avant la
+  mesure, et un effet de même sens sur deux corpus : avoir décidé sur ces
+  partitions de test n'introduit pas de biais de sélection notable, mais
+  cela est signalé ici. Pour reproduire exactement les chiffres de la
+  phase 1 : `--plafond 0`.
 
 ### Limites
 

@@ -267,21 +267,32 @@ def _engine_args(sp) -> None:
 def _mt_args(sp) -> None:
     sp.add_argument("--mt-model", default=MTConfig().model_id)
     sp.add_argument("--plafond", type=float, default=None, metavar="RATIO",
-                    help="traduction limitée à RATIO × la source + marge (en jetons) ; "
-                         "défaut : seulement max_new_tokens")
+                    help=f"traduction limitée à RATIO × la source + marge, en jetons "
+                         f"(défaut : {MTConfig().max_length_ratio:g} ; 0 : pas de plafond, "
+                         f"comme en phase 1)")
+
+
+def _ratio(args) -> float | None:
+    """Plafond effectif : celui de MTConfig si l'option est absente."""
+    if args.plafond is None:
+        return MTConfig().max_length_ratio
+    return args.plafond or None
 
 
 def _mt_engine(args) -> dict:
     return {"backend": args.backend, "compute_type": args.compute_type,
-            "max_length_ratio": args.plafond}
+            "max_length_ratio": _ratio(args)}
 
 
 def _mt_suffix(args) -> str:
-    return f" [plafond ×{args.plafond:g}]" if args.plafond else ""
+    """Le nom ne signale que l'écart au réglage par défaut."""
+    if args.plafond is None:
+        return ""
+    return f" [plafond ×{args.plafond:g}]" if args.plafond else " [sans plafond]"
 
 
 def _mt_models(args) -> dict:
-    return {"plafond_longueur": args.plafond} if args.plafond else {}
+    return {"plafond_longueur": _ratio(args)}
 
 
 # --- ligne de commande --------------------------------------------------------

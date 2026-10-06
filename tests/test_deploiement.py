@@ -203,7 +203,10 @@ def test_plafond_de_longueur_calcul():
     tr = Translator(MTConfig(max_new_tokens=256, max_length_ratio=2.0, max_length_margin=10))
     assert tr.max_tokens(20) == 50
     assert tr.max_tokens(200) == 256  # jamais au-delà de max_new_tokens
-    assert Translator(MTConfig(max_new_tokens=256)).max_tokens(20) == 256
+    sans = Translator(MTConfig(max_new_tokens=256, max_length_ratio=None))
+    assert sans.max_tokens(20) == 256
+    # Activé par défaut, d'après l'expérience de docs/RESULTATS.md.
+    assert MTConfig().max_length_ratio == 2.0
 
 
 class MTSpy:
