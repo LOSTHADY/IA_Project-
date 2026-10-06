@@ -145,9 +145,15 @@ paraît bien pire qu'il n'est.
 [![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase3_finetuning.ipynb)
 
 Le notebook [`notebooks/phase3_finetuning.ipynb`](notebooks/phase3_finetuning.ipynb)
-entraîne les modèles, puis compare cascade et bout-en-bout avec le protocole
-de la phase 1. Les checkpoints vont sur Drive, et `--resume` reprend après
-une coupure de session.
+entraîne les modèles, compare cascade et bout-en-bout avec le protocole de
+la phase 1, puis fait tourner l'assistant affiné, jusqu'à une démo au micro.
+Un essai rapide mesure d'abord la vitesse du GPU et annonce la durée de
+l'entraînement complet. Les checkpoints vont sur Drive, et `--resume`
+reprend après une coupure de session.
+
+Si le bouton ne s'ouvre pas (le nom de branche contient des « / »), passer
+par Colab : *Fichier → Ouvrir un notebook → GitHub*, ou télécharger le
+fichier `.ipynb` depuis GitHub puis *Fichier → Importer un notebook*.
 
 ```bash
 # Whisper multi-tâche : transcription bambara + traduction française

@@ -79,6 +79,17 @@ def test_whisper_sauve_un_modele_rechargeable(whisper_ft):
     assert list(whisper_ft.glob("checkpoint-*"))
 
 
+def test_le_notebook_estime_la_duree_d_apres_l_essai(whisper_ft, capsys):
+    """La cellule « durée prévue » du notebook Colab lit trainer_state.json,
+    que le script écrit en fin d'entraînement."""
+    nb = json.loads((ROOT / "notebooks" / "phase3_finetuning.ipynb").read_text(encoding="utf-8"))
+    [cell] = [c for c in nb["cells"] if "Durée prévue" in "".join(c["source"])]
+    code = "".join(cell["source"]).replace("/content/essai", str(whisper_ft))
+    exec(code, {"EPOCHS_WHISPER": 1, "EPOCHS_NLLB": 1})
+    out = capsys.readouterr().out
+    assert "s par étape" in out and "Whisper, 3 époque(s)" in out
+
+
 def test_whisper_reprend_au_dernier_checkpoint(work, whisper_ft):
     log = _train("finetune_whisper.py", "--dataset", str(work["speech"]),
                  "--model", str(work["whisper"]), "--task", "both", "--warmup", "0",

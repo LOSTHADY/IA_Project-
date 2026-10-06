@@ -158,6 +158,9 @@ def main() -> None:
     if args.resume:
         print(f"Reprise depuis {last}" if last else "Aucun checkpoint : départ de zéro")
     trainer.train(resume_from_checkpoint=last)
+    # Historique et durée d'entraînement (trainer_state.json), pour estimer
+    # la durée d'un entraînement complet à partir d'un essai.
+    trainer.save_state()
     trainer.save_model(output)
     tokenizer.save_pretrained(output)
     print(f"Modèle {args.direction} enregistré dans {output}")
