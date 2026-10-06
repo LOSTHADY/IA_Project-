@@ -16,11 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from eval.dataset import load_testset, describe  # noqa: E402
+from eval.dataset import load_testset, describe, MIN_ITEMS, MIN_SPEAKERS  # noqa: E402
 from bambara_voice.normalize import orthography_ratio  # noqa: E402
-
-MIN_ITEMS = 200
-MIN_SPEAKERS = 8
 
 
 def main() -> None:

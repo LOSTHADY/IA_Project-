@@ -1,9 +1,11 @@
 """Modèle de dialogue — composant délibérément interchangeable.
 
 Le LLM n'est pas l'objet de l'étude : il raisonne en français et sa sortie est
-traduite. Ce qui compte ici, c'est la *contrainte de style* appliquée à sa
-sortie (phrases courtes, français simple), qui améliore nettement la fidélité
-de la traduction sortante sans rien coûter.
+traduite. On lui demande un français simple et des phrases courtes (prompt
+système), et l'on retire de sa sortie ce que la TTS ne saurait pas prononcer.
+L'idée que des phrases plus courtes se traduisent mieux vers le bambara n'a
+pas été confirmée à contenu égal (docs/RESULTATS.md, découpage avant
+traduction) : la sortie n'est donc plus coupée au milieu des phrases.
 
 Trois backends :
   - "transformers" : n'importe quel modèle instruct HF (défaut)
@@ -21,18 +23,21 @@ from .config import LLMConfig
 logger = logging.getLogger(__name__)
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE_RE = re.compile(r"(?<=[,;:])\s+")
 # Marqueurs de mise en forme que la TTS ne saurait pas prononcer.
 _MARKUP_RE = re.compile(r"[*_#`|]+")
 _BULLET_RE = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s*", flags=re.MULTILINE)
 
 
-def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int = 3) -> str:
-    """Force la sortie du LLM dans la forme la plus traduisible possible.
+def simplify_for_translation(text: str, max_words: int | None = None,
+                             max_sentences: int = 3) -> str:
+    """Prépare la sortie du LLM pour la traduction et la voix.
 
-    Le prompt système demande déjà des phrases courtes, mais aucun modèle ne
-    respecte une consigne à 100 %. Ce post-traitement est la garantie dure :
-    il coupe les phrases trop longues à la frontière de proposition la plus
-    proche et supprime toute mise en forme.
+    Supprime toute mise en forme et garde au plus `max_sentences` phrases :
+    une réponse vocale doit rester brève. Avec `max_words`, coupe aussi les
+    phrases trop longues à la dernière virgule dans la limite. Ce n'est plus
+    le défaut : la coupure perd la fin de la phrase et fabrique un fragment,
+    que NLLB traduit moins bien que la phrase entière (docs/RESULTATS.md).
     """
     if not text:
         return ""
@@ -46,7 +51,7 @@ def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int 
         if not sentence:
             continue
         words = sentence.split()
-        if len(words) > max_words:
+        if max_words and len(words) > max_words:
             # Couper à la dernière virgule dans la limite, sinon couper net.
             head = words[:max_words]
             cut = max(
@@ -58,6 +63,39 @@ def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int 
         if len(kept) >= max_sentences:
             break
     return " ".join(kept)
+
+
+def split_for_translation(text: str, max_words: int = 10, min_words: int = 4) -> list[str]:
+    """Découpe un texte français en segments courts, sans rien en retirer.
+
+    Une phrase de plus de `max_words` mots est coupée après une virgule, un
+    point-virgule ou un deux-points. Les morceaux voisins sont regroupés tant
+    qu'ils tiennent dans `max_words`, et un morceau de moins de `min_words`
+    mots rejoint son voisin. Une phrase sans ponctuation interne reste
+    entière : on ne coupe jamais au milieu d'une proposition.
+
+    Sert à mesurer l'effet de la seule longueur des phrases sur la
+    traduction (`eval.baselines mt --decoupe`). Mesuré sur NLLB zero-shot :
+    les morceaux se traduisent moins bien que la phrase entière
+    (docs/RESULTATS.md). La chaîne ne s'en sert donc pas.
+    """
+    segments: list[str] = []
+    for sentence in _SENTENCE_RE.split(re.sub(r"\s+", " ", text).strip()):
+        if not sentence:
+            continue
+        if len(sentence.split()) <= max_words:
+            segments.append(sentence)
+            continue
+        merged: list[str] = []
+        for piece in _CLAUSE_RE.split(sentence):
+            n = len(piece.split())
+            if merged and (len(merged[-1].split()) + n <= max_words or n < min_words
+                           or len(merged[-1].split()) < min_words):
+                merged[-1] += " " + piece
+            else:
+                merged.append(piece)
+        segments.extend(merged)
+    return segments
 
 
 class ChatModel:
@@ -129,26 +167,29 @@ class ChatModel:
 
         msgs = self._messages(user_text_fr, history)
         try:
-            prompt_ids = self._tokenizer.apply_chat_template(
-                msgs, add_generation_prompt=True, return_tensors="pt"
-            ).to(self.device)
+            # Toujours un dictionnaire (input_ids, attention_mask) : selon la
+            # version de transformers, sans return_dict, on reçoit un tenseur
+            # ou déjà un dictionnaire.
+            inputs = self._tokenizer.apply_chat_template(
+                msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
+            )
         except (ValueError, AttributeError):
             # Modèle sans gabarit de chat : repli sur une mise en forme simple.
             flat = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
-            prompt_ids = self._tokenizer(
-                flat + "\nassistant:", return_tensors="pt"
-            ).input_ids.to(self.device)
+            inputs = self._tokenizer(flat + "\nassistant:", return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        sampling = self.config.temperature > 0
         with torch.no_grad():
             out = self._model.generate(
-                prompt_ids,
+                **inputs,
                 max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.temperature > 0,
-                temperature=max(self.config.temperature, 1e-4),
-                pad_token_id=self._tokenizer.eos_token_id,
+                do_sample=sampling,
+                **({"temperature": self.config.temperature} if sampling else {}),
+                pad_token_id=self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
             )
         # Ne décoder que ce qui a été ajouté au prompt.
-        new_tokens = out[0][prompt_ids.shape[-1]:]
+        new_tokens = out[0][inputs["input_ids"].shape[-1]:]
         return self._tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def _reply_llamacpp(self, user_text_fr: str, history: list[dict] | None) -> str:

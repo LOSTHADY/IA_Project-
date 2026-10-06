@@ -4,6 +4,23 @@ C'est le chemin critique du projet : sans ce jeu, aucun chiffre du mémoire
 n'est défendable. Tout le reste du code peut avancer en parallèle, mais la
 collecte doit démarrer en premier.
 
+La collecte se fait avec `python app/collect_app.py`, selon le protocole de
+[`docs/COLLECTE.md`](../../docs/COLLECTE.md). Le fichier `testset.jsonl`
+décrit ci-dessous en est l'export (`python scripts/export_testset.py`).
+
+| Fichier | Contenu | Versionné |
+|---|---|---|
+| `consignes.json` | situations de parole spontanée | oui |
+| `testset.example.jsonl` | trois lignes d'exemple du format | oui |
+| `locuteurs.jsonl` | locuteurs pseudonymisés et leur consentement | **non** |
+| `collecte.jsonl` | enregistrements, transcriptions, statuts | **non** |
+| `audio/` | WAV mono 16 kHz | **non** |
+| `testset*.jsonl` | exports | **non** |
+
+Le dépôt est public : les données de collecte restent hors de git tant que
+les locuteurs n'ont pas accepté leur diffusion. **Les sauvegarder
+ailleurs après chaque séance.**
+
 ## Format
 
 Un fichier JSONL, une ligne par énoncé, encodé en UTF-8 :

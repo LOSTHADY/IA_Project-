@@ -1,0 +1,123 @@
+# Expérience : des phrases plus courtes se traduisent-elles mieux vers le
+# bambara ? (levier 2, docs/METHODE.md, §4)
+#
+# L'analyse d'erreurs de la phase 1 ne permet pas de conclure : la longueur
+# s'y confond avec le type de contenu. Ici, le contenu est le même : les
+# phrases françaises longues de Bayelemabaga sont traduites soit entières,
+# soit découpées aux virgules en segments courts (split_for_translation),
+# puis comparées à la même référence bambara, phrase par phrase.
+#
+# Partition de validation : le résultat orientera un choix de conception,
+# le test reste réservé à la mesure finale. Paramètres fixés à l'avance :
+# phrases d'au moins 12 mots, segments d'au plus 10 mots.
+name: Découpage avant traduction (levier 2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      limite:
+        description: "Paires tirées avant le filtre de longueur"
+        default: "1000"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/decoupe-nllb.yml]
+
+permissions:
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  LIMITE: ${{ inputs.limite || '1000' }}
+  CORPUS: >-
+    --dataset RobotsMaliAI/bayelemabaga --split validation --min-mots 12
+
+jobs:
+  mesure:
+    name: ${{ matrix.nom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: entieres
+            label: "NLLB phrases entières"
+            args: ""
+          - nom: decoupees
+            label: "NLLB découpé ≤10 mots"
+            args: "--decoupe 10"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Libérer de la place
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Mesure
+        run: |
+          python -m eval.baselines --out results --device cpu --label "${{ matrix.label }}" \
+            mt $CORPUS --limit "$LIMITE" ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: decoupe-${{ matrix.nom }}
+          path: results/
+          if-no-files-found: warn
+
+  comparaison:
+    needs: mesure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: decoupe-*
+          path: results
+          merge-multiple: true
+
+      - name: Comparaison
+        run: |
+          {
+            echo "## Découpage avant traduction vers le bambara"
+            echo
+            python -m eval.compare results/mt-*.json
+            echo
+            echo "### Phrases entières contre découpées, sur les mêmes phrases"
+            echo
+            echo "Seules les lignes fr→bm concernent l'expérience (bm→fr est identique)."
+            echo
+            python -m eval.significance results/mt-*.json \
+              --noms "NLLB phrases entières" "NLLB découpé ≤10 mots"
+            echo
+            echo "### Analyse d'erreurs"
+            echo
+            python -m eval.analysis results/mt-*.json
+          } | tee decoupe.md
+          cat decoupe.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decoupe-resultats
+          path: |
+            decoupe.md
+            results/

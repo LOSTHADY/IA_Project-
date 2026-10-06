@@ -4,6 +4,7 @@
     python -m bambara_voice.cli audio enregistrement.wav --out reponse.wav
     python -m bambara_voice.cli audio in.wav --arch e2e
     python -m bambara_voice.cli check                        # état des composants
+    python -m bambara_voice.cli --config modeles-cpu/config.json audio in.wav
 """
 
 from __future__ import annotations
@@ -14,12 +15,12 @@ import logging
 import sys
 from pathlib import Path
 
-from .config import cascade_config, e2e_config
+from .config import build_config
 from .pipeline import VoicePipeline
 
 
 def _pipeline(args) -> VoicePipeline:
-    config = cascade_config() if args.arch == "cascade" else e2e_config()
+    config = build_config(args.arch, args.config)
     if args.llm_backend:
         config.llm.backend = args.llm_backend
     if args.no_templates:
@@ -76,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bambara_voice", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--arch", choices=["cascade", "e2e"], default="cascade")
+    parser.add_argument("--config", default=None,
+                        help="fichier de déploiement JSON (cf. scripts/export_cpu.py)")
     parser.add_argument("--llm-backend", choices=["transformers", "llamacpp", "echo"],
                         default=None)
     parser.add_argument("--no-templates", action="store_true")

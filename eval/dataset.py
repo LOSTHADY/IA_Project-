@@ -6,6 +6,13 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Taille et diversité minimales pour qu'un chiffre soit défendable : en dessous
+# de 200 items, l'intervalle de confiance sur le WER est trop large pour
+# conclure ; en dessous de 8 locuteurs, le WER mesure surtout des voix
+# particulières.
+MIN_ITEMS, MAX_ITEMS = 200, 500
+MIN_SPEAKERS = 8
+
 
 @dataclass
 class TestItem:

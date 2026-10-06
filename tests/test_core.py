@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bambara_voice.normalize import normalize, fold, orthography_ratio
-from bambara_voice.llm import simplify_for_translation
+from bambara_voice.llm import simplify_for_translation, split_for_translation
 from bambara_voice.templates import TemplateBank, Template, dice
 from eval.metrics import score_asr, score_mt
 from eval.dataset import load_testset, describe
@@ -43,10 +43,19 @@ def test_orthography_ratio():
 
 # --- simplification de la sortie LLM ---------------------------------------
 
-def test_simplify_coupe_les_phrases_trop_longues():
+def test_simplify_coupe_les_phrases_trop_longues_sur_demande():
     long = " ".join(["mot"] * 40) + "."
     out = simplify_for_translation(long, max_words=15)
     assert len(out.split()) <= 16  # 15 mots + la ponctuation finale
+
+
+def test_simplify_ne_coupe_plus_les_phrases_par_defaut():
+    """La coupure perd la fin de la phrase sans gain mesuré (RESULTATS.md)."""
+    from bambara_voice.config import LLMConfig
+
+    long = " ".join(["mot"] * 40) + "."
+    assert simplify_for_translation(long) == long
+    assert LLMConfig().max_words is None
 
 
 def test_simplify_retire_la_mise_en_forme():
@@ -57,6 +66,26 @@ def test_simplify_retire_la_mise_en_forme():
 def test_simplify_limite_le_nombre_de_phrases():
     out = simplify_for_translation("Un. Deux. Trois. Quatre. Cinq.")
     assert out.count(".") == 3
+
+
+def test_decoupe_aux_frontieres_de_proposition_sans_rien_perdre():
+    text = ("Quand le chef du village est arrivé au marché, tous les commerçants se "
+            "sont levés, et ils lui ont offert du thé et des noix de cola. Merci.")
+    segments = split_for_translation(text, max_words=10)
+    assert segments == ["Quand le chef du village est arrivé au marché,",
+                        "tous les commerçants se sont levés,",
+                        "et ils lui ont offert du thé et des noix de cola.", "Merci."]
+    assert " ".join(segments) == text  # le découpage ne retire rien
+
+
+def test_decoupe_garde_les_phrases_courtes_et_sans_ponctuation():
+    assert split_for_translation("Il les faisait cuire.") == ["Il les faisait cuire."]
+    sans_virgule = " ".join(["mot"] * 20) + "."
+    assert split_for_translation(sans_virgule, max_words=10) == [sans_virgule]
+    # Un morceau trop court (« Oui, ») rejoint son voisin.
+    phrase = "Oui, je viendrai demain matin au marché avec mon frère et ma sœur."
+    assert split_for_translation(phrase, max_words=10) == [phrase]
+    assert split_for_translation("") == []
 
 
 # --- gabarits ---------------------------------------------------------------
@@ -97,6 +126,16 @@ def test_ecart_orthographique_est_isole_par_le_repli():
     assert scores.wer > 0
     assert scores.wer_folded == 0
     assert scores.orthographic_gap == scores.wer
+
+
+def test_la_ponctuation_ne_compte_ni_en_strict_ni_dans_l_ecart():
+    # Une virgule ou un point de plus n'est pas une erreur de reconnaissance,
+    # et ne doit pas gonfler l'écart « orthographique ».
+    scores = score_asr(["I ni cɛ, n bɛ taa."], ["i ni cɛ n bɛ taa"])
+    assert scores.wer == 0 and scores.orthographic_gap == 0
+    # L'apostrophe, elle, est orthographique : comptée en strict seulement.
+    scores = score_asr(["ka fɔ"], ["k'a fɔ"])
+    assert scores.wer > 0 and scores.wer_folded == 0
 
 
 def test_score_mt_identique_donne_100():
