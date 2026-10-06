@@ -210,6 +210,8 @@ avancer en parallèle ; elle, non.
   Evaluation* — EMNLP 2004 — <https://aclanthology.org/W04-3250/>
 - Field, C. A. et Welsh, A. H. — *Bootstrapping Clustered Data* — Journal
   of the Royal Statistical Society, série B, 69(3), 2007
+- Radford, A. et al. — *Robust Speech Recognition via Large-Scale Weak
+  Supervision* (Whisper) — 2022 — <https://arxiv.org/abs/2212.04356>
 - Kunnafonidilaw ka Cadeau, ASR dataset de bambara contemporain —
   <https://arxiv.org/html/2512.19400>
 - Manding Language Tech Resources (An ka taa) —
