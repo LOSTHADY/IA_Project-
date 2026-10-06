@@ -1,0 +1,4 @@
+{
+  "asr": {"model_id": "facebook/mms-1b-all", "kind": "ctc", "target_lang": "bam"},
+  "llm": {"model_id": "Qwen/Qwen2.5-1.5B-Instruct"}
+}

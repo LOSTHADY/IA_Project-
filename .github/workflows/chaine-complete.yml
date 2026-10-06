@@ -1,0 +1,99 @@
+# La chaîne complète avec les vrais modèles, sur CPU : audio bambara →
+# MMS → NLLB → LLM → NLLB → MMS-TTS (cascade, zero-shot), sur quelques
+# énoncés de Jeli-ASR. Vérifie que l'assemblage fonctionne en vrai, mesure
+# la latence de chaque étape et montre les réponses produites.
+#
+# Configuration : configs/zero-shot.json (MMS pour l'ASR, Whisper non affiné
+# n'écrivant pas le bambara ; un LLM ouvert, sans compte Hugging Face).
+# Latences mesurées sur les processeurs de GitHub, en PyTorch fp32 :
+# indicatives seulement (docs/DEPLOIEMENT.md pour la machine cible).
+name: Chaîne complète (vrais modèles, CPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      limite:
+        description: "Énoncés de Jeli-ASR (test)"
+        default: "10"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/chaine-complete.yml, configs/zero-shot.json]
+
+permissions:
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  LIMITE: ${{ inputs.limite || '10' }}
+
+jobs:
+  chaine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Libérer de la place (modèles et corpus pèsent plusieurs Go)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      # Information seulement : le LLM de la configuration par défaut.
+      - name: Le LLM par défaut est-il accessible sans compte ?
+        continue-on-error: true
+        run: |
+          python -c "from huggingface_hub import hf_hub_download as d; d('google/gemma-3-1b-it', 'config.json'); print('accessible')"
+
+      - name: Échantillon de Jeli-ASR (partition de test)
+        run: python scripts/export_corpus_sample.py --limit "$LIMITE" --out echantillon
+
+      - name: Chargement des composants
+        run: python -m bambara_voice.cli --config configs/zero-shot.json check
+
+      - name: Chaîne complète (cascade, avec synthèse)
+        run: |
+          python -m eval.run_eval --testset echantillon/testset.jsonl --arch cascade \
+            --config configs/zero-shot.json --synthesize --out resultats > /dev/null
+
+      - name: Résumé
+        run: |
+          python - <<'EOF' | tee resume.md
+          import json
+          from pathlib import Path
+
+          [path] = [p for p in Path("resultats").glob("cascade-*.json")]
+          r = json.loads(path.read_text(encoding="utf-8"))
+          rows = [json.loads(l) for l in path.with_suffix(".details.jsonl").read_text(encoding="utf-8").splitlines() if l]
+          lat = r["latence"]
+          print("## Chaîne complète, vrais modèles, CPU\n")
+          print("Modèles : " + " ; ".join(f"{k} {v}" for k, v in r["modeles"].items()) + "\n")
+          print("| Étape | Temps moyen (s) |\n|---|---|")
+          for step, s in lat["par_etape_s"].items():
+              print(f"| {step} | {s:.2f} |")
+          print(f"| **total** | **{lat['total_moyen_s']:.2f}** |\n")
+          print(f"RTF moyen {lat['rtf_moyen']:.2f} ; WER strict {100 * r['asr']['wer']:.1f} % ; "
+                f"gabarits {100 * r['gabarits']['couverture']:.0f} % des tours\n")
+          print("| Référence | ASR | → français | Réponse du LLM | → bambara |\n|---|---|---|---|---|")
+          for x in rows:
+              cells = [x["ref_transcript_bm"], x["source_bm"], x["source_fr"], x["reply_fr"], x["reply_bm"]]
+              print("| " + " | ".join(c.replace("|", "/").replace("\n", " ") for c in cells) + " |")
+          EOF
+          cat resume.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaine-complete
+          path: |
+            resume.md
+            resultats/
