@@ -21,6 +21,7 @@ from .config import LLMConfig
 logger = logging.getLogger(__name__)
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE_RE = re.compile(r"(?<=[,;:])\s+")
 # Marqueurs de mise en forme que la TTS ne saurait pas prononcer.
 _MARKUP_RE = re.compile(r"[*_#`|]+")
 _BULLET_RE = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s*", flags=re.MULTILINE)
@@ -58,6 +59,38 @@ def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int 
         if len(kept) >= max_sentences:
             break
     return " ".join(kept)
+
+
+def split_for_translation(text: str, max_words: int = 10, min_words: int = 4) -> list[str]:
+    """Découpe un texte français en segments courts, sans rien en retirer.
+
+    Une phrase de plus de `max_words` mots est coupée après une virgule, un
+    point-virgule ou un deux-points. Les morceaux voisins sont regroupés tant
+    qu'ils tiennent dans `max_words`, et un morceau de moins de `min_words`
+    mots rejoint son voisin. Une phrase sans ponctuation interne reste
+    entière : on ne coupe jamais au milieu d'une proposition.
+
+    C'est l'alternative à la troncature de `simplify_for_translation` : même
+    contenu, phrases plus courtes. Son effet sur la traduction se mesure
+    (`eval.baselines mt --decoupe`) avant de s'en servir dans la chaîne.
+    """
+    segments: list[str] = []
+    for sentence in _SENTENCE_RE.split(re.sub(r"\s+", " ", text).strip()):
+        if not sentence:
+            continue
+        if len(sentence.split()) <= max_words:
+            segments.append(sentence)
+            continue
+        merged: list[str] = []
+        for piece in _CLAUSE_RE.split(sentence):
+            n = len(piece.split())
+            if merged and (len(merged[-1].split()) + n <= max_words or n < min_words
+                           or len(merged[-1].split()) < min_words):
+                merged[-1] += " " + piece
+            else:
+                merged.append(piece)
+        segments.extend(merged)
+    return segments
 
 
 class ChatModel:

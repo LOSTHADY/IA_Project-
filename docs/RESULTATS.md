@@ -193,8 +193,10 @@ Entre parenthèses : nombre de phrases.
    sorties dégénérées, le chrF++ et la latence. Option `--plafond` de
    `eval.baselines` (désactivée par défaut), expérience dans le workflow
    « Plafond de longueur NLLB », sur les mêmes phrases que ci-dessus.
-3. **Levier 2** : prévoir l'expérience directe (même contenu, avec et sans
-   simplification), les longueurs observées ici ne suffisant pas à conclure.
+3. **Levier 2** : expérience directe, les longueurs observées ici ne
+   suffisant pas à conclure. Mêmes phrases longues, traduites entières puis
+   découpées en segments courts (`eval.baselines mt --decoupe`, workflow
+   « Découpage avant traduction »).
 
 ### Limites
 

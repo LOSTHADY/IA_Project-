@@ -132,10 +132,18 @@ def run_asr(examples: Iterable[Example], recognizer, translator=None,
     return report, rows
 
 
-def run_mt(examples: Iterable[Example], bm2fr, fr2bm) -> tuple[dict, list[dict]]:
+def run_mt(examples: Iterable[Example], bm2fr, fr2bm,
+           split_fr: int | None = None) -> tuple[dict, list[dict]]:
     """chrF++/BLEU dans les deux sens. Vers le bambara, chrF++ aussi sur la
     forme repliée : même logique que le WER relâché, l'écart mesure ce que
-    coûte la seule graphie (ɛ/e, ɔ/o...)."""
+    coûte la seule graphie (ɛ/e, ɔ/o...).
+
+    `split_fr` : le français est découpé en segments d'au plus ce nombre de
+    mots (bambara_voice.llm.split_for_translation), traduits un à un puis
+    mis bout à bout. Même contenu, phrases plus courtes : c'est l'effet de
+    la longueur seule sur la traduction vers le bambara (levier 2)."""
+    from bambara_voice.llm import split_for_translation
+
     rows = []
     for ex in examples:
         if not (ex.bm and ex.fr):
@@ -143,14 +151,21 @@ def run_mt(examples: Iterable[Example], bm2fr, fr2bm) -> tuple[dict, list[dict]]
         t0 = time.perf_counter()
         hyp_fr = bm2fr.translate(ex.bm)
         t1 = time.perf_counter()
-        hyp_bm = fr2bm.translate(ex.fr)
-        rows.append({"id": ex.id, "ref_bm": ex.bm, "ref_fr": ex.fr,
-                     "hyp_fr": hyp_fr, "hyp_bm": hyp_bm,
-                     "secondes_bm_fr": t1 - t0,
-                     "secondes_fr_bm": time.perf_counter() - t1,
-                     # Arrêtée sur la longueur maximale : presque toujours une boucle.
-                     "coupe_fr": getattr(bm2fr, "last_capped", False),
-                     "coupe_bm": getattr(fr2bm, "last_capped", False)})
+        segments = split_for_translation(ex.fr, max_words=split_fr) if split_fr else [ex.fr]
+        parts, capped_bm = [], False
+        for segment in segments:
+            parts.append(fr2bm.translate(segment))
+            # Arrêtée sur la longueur maximale : presque toujours une boucle.
+            capped_bm |= getattr(fr2bm, "last_capped", False)
+        row = {"id": ex.id, "ref_bm": ex.bm, "ref_fr": ex.fr,
+               "hyp_fr": hyp_fr, "hyp_bm": " ".join(p for p in parts if p),
+               "secondes_bm_fr": t1 - t0,
+               "secondes_fr_bm": time.perf_counter() - t1,
+               "coupe_fr": getattr(bm2fr, "last_capped", False),
+               "coupe_bm": capped_bm}
+        if split_fr:
+            row["segments_fr"] = len(segments)
+        rows.append(row)
     if not rows:
         raise RuntimeError("aucune paire bambara-français")
 
@@ -165,6 +180,12 @@ def run_mt(examples: Iterable[Example], bm2fr, fr2bm) -> tuple[dict, list[dict]]
         "sorties_coupees": {"bm_fr": _mean([float(r["coupe_fr"]) for r in rows]),
                             "fr_bm": _mean([float(r["coupe_bm"]) for r in rows])},
     }
+    if split_fr:
+        report["decoupe_fr"] = {
+            "max_mots": split_fr,
+            "phrases_decoupees": _mean([float(r["segments_fr"] > 1) for r in rows]),
+            "segments_moyens": round(_mean([r["segments_fr"] for r in rows]), 2),
+        }
     return report, rows
 
 
@@ -328,11 +349,17 @@ def cmd_mt(args) -> tuple[dict, list[dict]]:
                        args.device)
     fr2bm = Translator(MTConfig(model_id=fr2bm_id, src_lang=FRA, tgt_lang=BAM, **engine),
                        args.device)
-    report, rows = run_mt(iter_examples(ds, cols, idx, with_audio=False), bm2fr, fr2bm)
+    examples = iter_examples(ds, cols, idx, with_audio=False)
+    if args.min_mots:
+        # Après le tirage : mêmes phrases d'une variante à l'autre.
+        corpus["filtre"] = f"français d'au moins {args.min_mots} mots"
+        examples = (ex for ex in examples if len((ex.fr or "").split()) >= args.min_mots)
+    report, rows = run_mt(examples, bm2fr, fr2bm, split_fr=args.decoupe)
     models = _short(bm2fr_id) if bm2fr_id == fr2bm_id else \
         f"{_short(bm2fr_id)} + {_short(fr2bm_id)}"
-    return {"nom": args.label or (f"{models} / {_short(args.dataset)}{_backend_suffix(args)}"
-                                  f"{_mt_suffix(args)}"),
+    suffix = _backend_suffix(args) + _mt_suffix(args)
+    suffix += f" [découpe ≤{args.decoupe} mots]" if args.decoupe else ""
+    return {"nom": args.label or f"{models} / {_short(args.dataset)}{suffix}",
             "architecture": "traduction", "maillon": "mt", "corpus": corpus,
             "composition": {"n": report["mt_bm_fr"]["n"]},
             "modeles": {"mt_bm_fr": bm2fr_id, "mt_fr_bm": fr2bm_id, "backend": args.backend,
@@ -397,6 +424,11 @@ def main(argv: list[str] | None = None) -> None:
     _mt_args(sp)
     sp.add_argument("--bm2fr-model", default=None, help="défaut : --mt-model")
     sp.add_argument("--fr2bm-model", default=None, help="défaut : --mt-model")
+    sp.add_argument("--decoupe", type=int, default=None, metavar="MOTS",
+                    help="vers le bambara, découper le français en segments d'au plus MOTS "
+                         "mots aux virgules (levier 2)")
+    sp.add_argument("--min-mots", type=int, default=None, metavar="MOTS",
+                    help="ne garder que les paires dont le français a au moins MOTS mots")
     _engine_args(sp)
     sp.set_defaults(func=cmd_mt)
 

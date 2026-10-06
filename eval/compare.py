@@ -30,6 +30,7 @@ ROWS = [
     ("BLEU fr→bm", lambda r: _num(r.get("mt_fr_bm", {}).get("bleu"))),
     ("Sorties coupées bm→fr", lambda r: _pct(r.get("sorties_coupees", {}).get("bm_fr"))),
     ("Sorties coupées fr→bm", lambda r: _pct(r.get("sorties_coupees", {}).get("fr_bm"))),
+    ("Phrases découpées (fr→bm)", lambda r: _pct(r.get("decoupe_fr", {}).get("phrases_decoupees"))),
     ("Latence totale (s)", lambda r: _num(r.get("latence", {}).get("total_moyen_s"))),
     ("RTF", lambda r: _num(r.get("latence", {}).get("rtf_moyen"))),
     ("Couverture gabarits", lambda r: _pct(r.get("gabarits", {}).get("couverture"))),

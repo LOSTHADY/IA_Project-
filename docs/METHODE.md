@@ -88,8 +88,15 @@ concret, par prompt système **et** par post-traitement dur
 (`bambara_voice.llm.simplify_for_translation`) — un prompt seul n'est jamais
 respecté à 100 %.
 
-Coût nul, effet important sur la fidélité de la traduction sortante. À
-quantifier : chrF++ fr→bm avec et sans contrainte, sur le même jeu.
+Coût nul. L'effet sur la fidélité de la traduction sortante reste à
+quantifier : l'analyse d'erreurs de la phase 1 ne suffit pas, la longueur
+des phrases s'y confondant avec leur type (`docs/RESULTATS.md`). Le
+mécanisme se teste à contenu égal : les phrases françaises longues de
+Bayelemabaga (validation) sont traduites entières, puis découpées aux
+virgules en segments courts (`split_for_translation`), et comparées à la même
+référence bambara (workflow « Découpage avant traduction »). Si le découpage
+aide, il peut aussi remplacer la troncature du post-traitement, qui coupe
+les phrases trop longues et en perd la fin.
 
 ### Levier 3 — réponses gabarits validées
 

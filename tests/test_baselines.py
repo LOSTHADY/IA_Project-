@@ -122,6 +122,30 @@ def test_run_mt_compte_les_sorties_coupees():
     assert [r["coupe_bm"] for r in rows] == [False, True]
 
 
+def test_run_mt_decoupe_le_francais_avant_traduction():
+    from bambara_voice.config import BAM, FRA, MTConfig
+
+    class Echo(FakeMT):
+        """Vers le bambara, rend chaque segment entre crochets."""
+
+        def translate(self, text):
+            self.calls = getattr(self, "calls", []) + [text]
+            return f"[{text}]"
+
+    fr = "Quand le chef est arrivé au grand marché du village, tous les commerçants se sont levés."
+    exs = [Example(id="a", bm="n bɛ taa", fr=fr), Example(id="b", bm="i ni ce", fr="Bonjour.")]
+    fr2bm = Echo(MTConfig(src_lang=FRA, tgt_lang=BAM))
+    report, rows = baselines.run_mt(exs, FakeMT(MTConfig(src_lang=BAM, tgt_lang=FRA)), fr2bm,
+                                    split_fr=10)
+    assert fr2bm.calls == ["Quand le chef est arrivé au grand marché du village,",
+                           "tous les commerçants se sont levés.", "Bonjour."]
+    assert rows[0]["hyp_bm"] == ("[Quand le chef est arrivé au grand marché du village,] "
+                                 "[tous les commerçants se sont levés.]")
+    assert [r["segments_fr"] for r in rows] == [2, 1]
+    assert report["decoupe_fr"] == {"max_mots": 10, "phrases_decoupees": 0.5,
+                                    "segments_moyens": 1.5}
+
+
 def test_run_tts_ecrit_audio_et_grille_mos(tmp_path):
     report, rows = baselines.run_tts([("tts-000", "i ni ce")], FakeTTS(), tmp_path)
     assert (tmp_path / "tts-000.wav").exists()
@@ -197,3 +221,15 @@ def test_cli_plafond_de_longueur(tmp_path, fakes):
     assert mt["nom"].endswith("[plafond ×2]")
     assert mt["modeles"]["plafond_longueur"] == 2.0
     assert set(mt["sorties_coupees"]) == {"bm_fr", "fr_bm"}
+
+
+def test_cli_decoupe_et_phrases_longues(tmp_path, fakes):
+    bayel = _bayelemabaga_like(tmp_path / "bayel")
+    out = tmp_path / "results"
+    baselines.main(["--out", str(out), "--device", "cpu", "mt", "--dataset", str(bayel),
+                    "--decoupe", "10", "--min-mots", "3"])
+    mt = _report(out, "mt")
+    assert mt["nom"].endswith("[découpe ≤10 mots]")
+    # Seule « il est là » a au moins trois mots.
+    assert mt["composition"]["n"] == 1 and mt["corpus"]["filtre"].endswith("3 mots")
+    assert mt["decoupe_fr"]["max_mots"] == 10

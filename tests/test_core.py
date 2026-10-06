@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bambara_voice.normalize import normalize, fold, orthography_ratio
-from bambara_voice.llm import simplify_for_translation
+from bambara_voice.llm import simplify_for_translation, split_for_translation
 from bambara_voice.templates import TemplateBank, Template, dice
 from eval.metrics import score_asr, score_mt
 from eval.dataset import load_testset, describe
@@ -57,6 +57,26 @@ def test_simplify_retire_la_mise_en_forme():
 def test_simplify_limite_le_nombre_de_phrases():
     out = simplify_for_translation("Un. Deux. Trois. Quatre. Cinq.")
     assert out.count(".") == 3
+
+
+def test_decoupe_aux_frontieres_de_proposition_sans_rien_perdre():
+    text = ("Quand le chef du village est arrivé au marché, tous les commerçants se "
+            "sont levés, et ils lui ont offert du thé et des noix de cola. Merci.")
+    segments = split_for_translation(text, max_words=10)
+    assert segments == ["Quand le chef du village est arrivé au marché,",
+                        "tous les commerçants se sont levés,",
+                        "et ils lui ont offert du thé et des noix de cola.", "Merci."]
+    assert " ".join(segments) == text  # le découpage ne retire rien
+
+
+def test_decoupe_garde_les_phrases_courtes_et_sans_ponctuation():
+    assert split_for_translation("Il les faisait cuire.") == ["Il les faisait cuire."]
+    sans_virgule = " ".join(["mot"] * 20) + "."
+    assert split_for_translation(sans_virgule, max_words=10) == [sans_virgule]
+    # Un morceau trop court (« Oui, ») rejoint son voisin.
+    phrase = "Oui, je viendrai demain matin au marché avec mon frère et ma sœur."
+    assert split_for_translation(phrase, max_words=10) == [phrase]
+    assert split_for_translation("") == []
 
 
 # --- gabarits ---------------------------------------------------------------
