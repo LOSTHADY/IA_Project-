@@ -101,6 +101,7 @@ def run_asr(examples: Iterable[Example], recognizer, translator=None,
             # cascade, et son temps compte dans la latence.
             row["mt_depuis_asr"] = translator.translate(res.text)
             row["secondes_mt"] = time.perf_counter() - t1
+            row["coupe_fr"] = getattr(translator, "last_capped", False)
         rows.append(row)
     if not rows:
         raise RuntimeError("aucun exemple avec audio et référence")
@@ -146,7 +147,10 @@ def run_mt(examples: Iterable[Example], bm2fr, fr2bm) -> tuple[dict, list[dict]]
         rows.append({"id": ex.id, "ref_bm": ex.bm, "ref_fr": ex.fr,
                      "hyp_fr": hyp_fr, "hyp_bm": hyp_bm,
                      "secondes_bm_fr": t1 - t0,
-                     "secondes_fr_bm": time.perf_counter() - t1})
+                     "secondes_fr_bm": time.perf_counter() - t1,
+                     # Arrêtée sur la longueur maximale : presque toujours une boucle.
+                     "coupe_fr": getattr(bm2fr, "last_capped", False),
+                     "coupe_bm": getattr(fr2bm, "last_capped", False)})
     if not rows:
         raise RuntimeError("aucune paire bambara-français")
 
@@ -158,6 +162,8 @@ def run_mt(examples: Iterable[Example], bm2fr, fr2bm) -> tuple[dict, list[dict]]
         "mt_fr_bm_replie": score_mt([fold(h) for h in hyp_bm], [fold(r) for r in ref_bm]).to_dict(),
         "latence": _latency(rows, {"mt_bm_fr": "secondes_bm_fr",
                                    "mt_fr_bm": "secondes_fr_bm"}),
+        "sorties_coupees": {"bm_fr": _mean([float(r["coupe_fr"]) for r in rows]),
+                            "fr_bm": _mean([float(r["coupe_bm"]) for r in rows])},
     }
     return report, rows
 
@@ -237,6 +243,26 @@ def _engine_args(sp) -> None:
     sp.add_argument("--compute-type", default="int8", help="ctranslate2 : int8, float32...")
 
 
+def _mt_args(sp) -> None:
+    sp.add_argument("--mt-model", default=MTConfig().model_id)
+    sp.add_argument("--plafond", type=float, default=None, metavar="RATIO",
+                    help="traduction limitée à RATIO × la source + marge (en jetons) ; "
+                         "défaut : seulement max_new_tokens")
+
+
+def _mt_engine(args) -> dict:
+    return {"backend": args.backend, "compute_type": args.compute_type,
+            "max_length_ratio": args.plafond}
+
+
+def _mt_suffix(args) -> str:
+    return f" [plafond ×{args.plafond:g}]" if args.plafond else ""
+
+
+def _mt_models(args) -> dict:
+    return {"plafond_longueur": args.plafond} if args.plafond else {}
+
+
 # --- ligne de commande --------------------------------------------------------
 
 def _load(args, need_audio: bool, need_fr: bool):
@@ -268,15 +294,14 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
     translator = None
     if args.with_mt:
         translator = Translator(MTConfig(model_id=args.mt_model, src_lang=BAM, tgt_lang=FRA,
-                                         backend=args.backend,
-                                         compute_type=args.compute_type), args.device)
+                                         **_mt_engine(args)), args.device)
     report, rows = run_asr(iter_examples(ds, cols, idx), recognizer, translator, e2e=e2e)
 
     name = _short(args.model)
     if args.kind == "whisper" and language != "sw":
         name += f" ({language or 'auto'})"
     name += " → fr" if e2e else (f" + {_short(args.mt_model)}" if args.with_mt else "")
-    name += _backend_suffix(args)
+    name += _backend_suffix(args) + (_mt_suffix(args) if args.with_mt else "")
     n = report["mt_in_depuis_asr" if e2e else "asr"]["n"]
     return {"nom": args.label or name, "architecture": "e2e" if e2e else "cascade",
             "maillon": "asr", "corpus": corpus, "composition": {"n": n},
@@ -285,7 +310,8 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
                         **({"compute_type": args.compute_type}
                            if args.backend == "ctranslate2" else {}),
                         "language": language, "target_lang": args.target_lang,
-                        **({"mt_in": args.mt_model} if args.with_mt else {})},
+                        **({"mt_in": args.mt_model, **_mt_models(args)}
+                           if args.with_mt else {})},
             **report}, rows
 
 
@@ -297,7 +323,7 @@ def cmd_mt(args) -> tuple[dict, list[dict]]:
     # même NLLB pour les deux en zero-shot.
     bm2fr_id = args.bm2fr_model or args.mt_model
     fr2bm_id = args.fr2bm_model or args.mt_model
-    engine = {"backend": args.backend, "compute_type": args.compute_type}
+    engine = _mt_engine(args)
     bm2fr = Translator(MTConfig(model_id=bm2fr_id, src_lang=BAM, tgt_lang=FRA, **engine),
                        args.device)
     fr2bm = Translator(MTConfig(model_id=fr2bm_id, src_lang=FRA, tgt_lang=BAM, **engine),
@@ -305,12 +331,14 @@ def cmd_mt(args) -> tuple[dict, list[dict]]:
     report, rows = run_mt(iter_examples(ds, cols, idx, with_audio=False), bm2fr, fr2bm)
     models = _short(bm2fr_id) if bm2fr_id == fr2bm_id else \
         f"{_short(bm2fr_id)} + {_short(fr2bm_id)}"
-    return {"nom": args.label or f"{models} / {_short(args.dataset)}{_backend_suffix(args)}",
+    return {"nom": args.label or (f"{models} / {_short(args.dataset)}{_backend_suffix(args)}"
+                                  f"{_mt_suffix(args)}"),
             "architecture": "traduction", "maillon": "mt", "corpus": corpus,
             "composition": {"n": report["mt_bm_fr"]["n"]},
             "modeles": {"mt_bm_fr": bm2fr_id, "mt_fr_bm": fr2bm_id, "backend": args.backend,
                         **({"compute_type": args.compute_type}
-                           if args.backend == "ctranslate2" else {})}, **report}, rows
+                           if args.backend == "ctranslate2" else {}),
+                        **_mt_models(args)}, **report}, rows
 
 
 def cmd_tts(args) -> tuple[dict, list[dict]]:
@@ -360,13 +388,13 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--target-lang", default=None, help="adaptateur MMS, ex. bam")
     sp.add_argument("--with-mt", action="store_true",
                     help="cascade complète jusqu'au français, et propagation d'erreurs")
-    sp.add_argument("--mt-model", default=MTConfig().model_id)
+    _mt_args(sp)
     _engine_args(sp)
     sp.set_defaults(func=cmd_asr)
 
     sp = sub.add_parser("mt", help="chrF++/BLEU bm->fr et fr->bm")
     corpus_args(sp, BAYELEMABAGA, 500)
-    sp.add_argument("--mt-model", default=MTConfig().model_id)
+    _mt_args(sp)
     sp.add_argument("--bm2fr-model", default=None, help="défaut : --mt-model")
     sp.add_argument("--fr2bm-model", default=None, help="défaut : --mt-model")
     _engine_args(sp)

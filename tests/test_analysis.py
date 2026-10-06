@@ -69,6 +69,15 @@ def test_analyse_traduction():
     assert sum(v["n"] for v in m["chrf_par_longueur_source"].values()) == 4
 
 
+def test_sorties_coupees_et_boucles():
+    rows = [{**r, "coupe_fr": i == 1} for i, r in enumerate(MT_ROWS)]
+    rows[1]["hyp_fr"] = "il il il il il il il il il"
+    m = mt_analysis(rows, "ref_bm", "hyp_fr", "ref_fr", "coupe_fr")
+    assert m["coupees"] == pytest.approx(1 / 4) and m["coupees_en_boucle"] == 1.0
+    # Sans l'information (rapports de la phase 1), rien n'est inventé.
+    assert "coupees" not in mt_analysis(MT_ROWS, "ref_bm", "hyp_fr", "ref_fr", "coupe_fr")
+
+
 def _report(path: Path, report: dict, rows: list[dict]) -> Path:
     path.write_text(json.dumps(report), encoding="utf-8")
     path.with_suffix(".details.jsonl").write_text(

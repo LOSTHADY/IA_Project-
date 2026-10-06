@@ -1,6 +1,7 @@
 """Phase 5 : fichier de configuration, conversion CTranslate2 int8, et chaîne
 complète sur CPU (run_eval), sur des modèles minuscules construits en local."""
 
+import dataclasses
 import json
 import logging
 import sys
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bambara_voice.config import (  # noqa: E402
-    BAM, FRA, WHISPER_LANG_SLOT, build_config, load_config,
+    BAM, FRA, WHISPER_LANG_SLOT, MTConfig, build_config, load_config,
 )
 
 
@@ -196,6 +197,60 @@ def test_ct2_nllb_impose_la_langue_cible(cpu):
         tr._model = Spy(tr._model)
         assert isinstance(tr.translate("i ni ce"), str)
         assert tr._model.calls == [[lang]]
+
+
+def test_plafond_de_longueur_calcul():
+    tr = Translator(MTConfig(max_new_tokens=256, max_length_ratio=2.0, max_length_margin=10))
+    assert tr.max_tokens(20) == 50
+    assert tr.max_tokens(200) == 256  # jamais au-delà de max_new_tokens
+    assert Translator(MTConfig(max_new_tokens=256)).max_tokens(20) == 256
+
+
+class MTSpy:
+    """Budget de longueur passé au modèle, et longueur effectivement produite."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def generate(self, **kw):  # transformers
+        self.budget = kw["max_new_tokens"]
+        out = self.inner.generate(**kw)
+        self.produced = out.shape[1] - 1  # sans le token de début du décodeur
+        return out
+
+    def translate_batch(self, source, **kw):  # CTranslate2
+        self.budget = kw["max_decoding_length"]
+        out = self.inner.translate_batch(source, **kw)
+        self.produced = len(out[0].hypotheses[0])
+        return out
+
+
+@pytest.mark.parametrize("backend", ["transformers", "ctranslate2"])
+def test_plafond_de_longueur_relatif_a_la_source(cpu, backend):
+    """Le plafond borne la sortie et la coupure est signalée, sur les deux
+    moteurs."""
+    cfg = load_config(cpu / "cpu" / "config.json").mt_out
+    if backend == "transformers":
+        cfg = dataclasses.replace(cfg, model_id=str(cpu / "nllb"), backend="transformers")
+    budgets = {}
+    for ratio in (None, 1.0):
+        tr = Translator(dataclasses.replace(cfg, max_new_tokens=40, max_length_ratio=ratio,
+                                            max_length_margin=2), "cpu")
+        tr._ensure_loaded()
+        tr._model = MTSpy(tr._model)
+        tr.translate("je vais au marché")
+        budgets[ratio] = tr._model.budget
+        assert tr._model.produced <= tr._model.budget
+        assert tr.last_capped == (tr._model.produced >= tr._model.budget)
+    n_source = len(tr._tokenizer("je vais au marché")["input_ids"])
+    assert budgets[None] == 40
+    assert budgets[1.0] == n_source + 2 < 40
+    # Un seul jeton permis, le token de langue : la sortie est forcément coupée.
+    one = Translator(dataclasses.replace(cfg, max_new_tokens=1), "cpu")
+    one.translate("je vais au marché")
+    assert one.last_capped
+    one.translate("")
+    assert not one.last_capped
 
 
 def test_cli_tour_texte_avec_la_configuration(cpu, capsys):

@@ -11,6 +11,7 @@ tourne sous CTranslate2 (`backend="ctranslate2"`, int8).
 from __future__ import annotations
 
 import logging
+import math
 
 from .config import MTConfig, split_device
 from .normalize import normalize
@@ -32,6 +33,18 @@ class Translator:
         self.device = device
         self._model = None
         self._tokenizer = None
+        # La dernière traduction s'est-elle arrêtée sur la longueur maximale
+        # plutôt que sur une fin de phrase ? Presque toujours une boucle.
+        self.last_capped = False
+
+    def max_tokens(self, n_source: int) -> int:
+        """Longueur maximale de la traduction, en jetons, token de langue
+        compris (c'est ainsi que comptent generate et CTranslate2)."""
+        cfg = self.config
+        if cfg.max_length_ratio is None:
+            return cfg.max_new_tokens
+        return min(cfg.max_new_tokens,
+                   math.ceil(cfg.max_length_ratio * n_source) + cfg.max_length_margin)
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -84,6 +97,7 @@ class Translator:
     def translate(self, text: str) -> str:
         import torch
 
+        self.last_capped = False
         text = text.strip()
         if not text:
             return ""
@@ -99,8 +113,9 @@ class Translator:
             text, return_tensors="pt", truncation=True, max_length=512
         ).to(self.device)
 
+        budget = self.max_tokens(inputs["input_ids"].shape[1])
         gen_kwargs: dict = {
-            "max_new_tokens": cfg.max_new_tokens,
+            "max_new_tokens": budget,
             "num_beams": cfg.beam_size,
         }
         bos = self._target_token_id()
@@ -109,16 +124,23 @@ class Translator:
 
         with torch.no_grad():
             ids = self._model.generate(**inputs, **gen_kwargs)
+        # Une séquence commence par le token de début du décodeur.
+        self.last_capped = (ids.shape[1] - 1 >= budget
+                            and ids[0, -1].item() != self._tokenizer.eos_token_id)
         return self._finish(self._tokenizer.batch_decode(ids, skip_special_tokens=True)[0])
 
     def _translate_ct2(self, text: str) -> str:
         tok, cfg = self._tokenizer, self.config
         source = tok.convert_ids_to_tokens(tok.encode(text, truncation=True, max_length=512))
+        budget = self.max_tokens(len(source))
         # Le préfixe cible joue le rôle de forced_bos_token_id.
         res = self._model.translate_batch(
             [source], target_prefix=[[cfg.tgt_lang]], beam_size=cfg.beam_size,
-            max_decoding_length=cfg.max_new_tokens,
+            max_decoding_length=budget,
         )
+        # Les hypothèses comptent le préfixe mais pas la fin de phrase : une
+        # hypothèse qui remplit le budget a été coupée.
+        self.last_capped = len(res[0].hypotheses[0]) >= budget
         target = res[0].hypotheses[0][1:]  # sans le token de langue
         return tok.decode(tok.convert_tokens_to_ids(target), skip_special_tokens=True)
 

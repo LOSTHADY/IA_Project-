@@ -64,6 +64,11 @@ class MTConfig:
     max_new_tokens: int = 256
     backend: Literal["transformers", "ctranslate2"] = "transformers"
     compute_type: str = "int8"
+    # Plafond de longueur relatif à la source : au plus ratio × jetons source
+    # + marge. Coupe les boucles de génération (docs/RESULTATS.md, analyse
+    # d'erreurs). None : seul max_new_tokens borne la sortie.
+    max_length_ratio: float | None = None
+    max_length_margin: int = 10
 
 
 @dataclass

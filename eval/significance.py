@@ -56,6 +56,7 @@ class Series:
     ids: list[str]
     stats: np.ndarray     # (énoncés, k), additives
     speakers: list[str] | None = None  # locuteur de chaque énoncé, s'il est connu
+    refs: list[str] | None = None      # référence de chaque énoncé
 
     def score(self, summed: np.ndarray) -> float:
         return corpus_score(self.kind, summed)
@@ -126,7 +127,7 @@ def _series(label, kind, rows, id_key, hyp_key, ref_key, folded=False) -> Series
         [fold(h) for h in hyps] if folded else hyps, [fold(r) for r in refs] if folded else refs)
     speakers = [str(r.get("speaker") or "") for r in rows]
     return Series(label, kind, [str(r[id_key]) for r in rows], stats,
-                  speakers if all(speakers) else None)
+                  speakers if all(speakers) else None, refs)
 
 
 def load_series(report_path: str | Path) -> tuple[str, dict[str, Series]]:
@@ -172,6 +173,22 @@ def _percentiles(values: np.ndarray, alpha: float) -> tuple[float, float]:
     return float(lo), float(hi)
 
 
+def _check_same_items(systems: list[Series], common: list[str]) -> None:
+    """Le test apparié suppose les mêmes énoncés. Un même identifiant ne le
+    garantit pas : entre deux exécutions, le corpus a pu changer sur le Hub."""
+    known = [s for s in systems if s.refs]
+    if len(known) < 2:
+        return
+    first = dict(zip(known[0].ids, known[0].refs))
+    for s in known[1:]:
+        other = dict(zip(s.ids, s.refs))
+        differ = [i for i in common if other[i] != first[i]]
+        if differ:
+            raise ValueError(f"« {s.label} » : {len(differ)} énoncés portent le même identifiant "
+                             f"mais une autre référence (ex. {differ[0]}) : ce ne sont pas les "
+                             f"mêmes échantillons")
+
+
 def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np.ndarray]:
     """Unité de tirage effective, et l'unité de chaque énoncé commun."""
     speakers = systems[0].speakers
@@ -202,6 +219,7 @@ def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
     common = sorted(set.intersection(*(set(s.ids) for s in systems)))
     if not common:
         raise ValueError("aucun énoncé commun : les rapports portent sur des échantillons différents")
+    _check_same_items(systems, common)
     positions = [np.array([s.ids.index(i) for i in common]) for s in systems]
     unit, unit_of = _units(systems, common, unit)
     n_units = int(unit_of.max()) + 1

@@ -1,0 +1,141 @@
+# Expérience : plafonner la longueur des traductions de NLLB.
+#
+# L'analyse d'erreurs de la phase 1 (docs/RESULTATS.md) a montré que NLLB
+# boucle sur 1,6 à 3,4 % des phrases (« Sɔgɔsɔgɔsɔgɔ… »), jusqu'au plafond
+# fixe de 256 jetons. On retraduit ici les mêmes phrases (même corpus, même
+# partition, même graine, même limite) avec un plafond relatif à la source,
+# puis on compare aux sorties de la phase 1, phrase par phrase.
+#
+# Le ratio (2 × la source + 10 jetons) est fixé à l'avance et n'est pas
+# réglé : essayer plusieurs valeurs sur ce jeu de test et garder la
+# meilleure rendrait le résultat optimiste.
+name: Plafond de longueur NLLB
+
+on:
+  workflow_dispatch:
+    inputs:
+      plafond:
+        description: "Ratio maximal sortie / source, en jetons"
+        default: "2"
+      limite_mt:
+        description: "Phrases évaluées (même valeur que la phase 1 pour comparer)"
+        default: "500"
+      run_id_phase1:
+        description: "Exécution de la phase 1 qui sert de point de comparaison"
+        default: "36467549375"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/plafond-nllb.yml]
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  PLAFOND: ${{ inputs.plafond || '2' }}
+  LIMITE_MT: ${{ inputs.limite_mt || '500' }}
+  PHASE1: ${{ inputs.run_id_phase1 || '36467549375' }}
+
+jobs:
+  mesure:
+    name: ${{ matrix.nom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: bayelemabaga
+            corpus: Bayelemabaga
+            dataset: RobotsMaliAI/bayelemabaga
+          - nom: jeli
+            corpus: Jeli-ASR
+            dataset: RobotsMali/jeli-asr
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Libérer de la place (modèle et corpus pèsent plusieurs Go)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Mesure
+        run: |
+          python -m eval.baselines --out results --device cpu \
+            --label "NLLB plafonné ×$PLAFOND / ${{ matrix.corpus }}" \
+            mt --dataset ${{ matrix.dataset }} --limit "$LIMITE_MT" --plafond "$PLAFOND"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plafond-${{ matrix.nom }}
+          path: results/
+          if-no-files-found: warn
+
+  comparaison:
+    needs: mesure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plafond-*
+          path: results/plafond
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.PHASE1 }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: phase1-mt-*
+          path: results/phase1
+          merge-multiple: true
+
+      # eval.significance refuse la comparaison si les mêmes identifiants
+      # désignent d'autres phrases (corpus modifié sur le Hub entre-temps).
+      - name: Comparaison avec la phase 1
+        run: |
+          {
+            echo "## Plafond de longueur NLLB (×$PLAFOND la source + 10 jetons)"
+            echo
+            python -m eval.compare results/phase1/mt-*.json results/plafond/mt-*.json
+            for corpus in Bayelemabaga Jeli-ASR; do
+              echo
+              echo "### $corpus : sans plafond (phase 1) contre avec plafond"
+              echo
+              python -m eval.significance results/phase1/mt-*.json results/plafond/mt-*.json \
+                --noms "NLLB zero-shot / $corpus" "NLLB plafonné ×$PLAFOND / $corpus" \
+                || echo "(comparaison impossible)"
+            done
+            echo
+            echo "### Analyse d'erreurs avec plafond"
+            echo
+            python -m eval.analysis results/plafond/*.json
+          } | tee plafond.md
+          cat plafond.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plafond-resultats
+          path: |
+            plafond.md
+            results/

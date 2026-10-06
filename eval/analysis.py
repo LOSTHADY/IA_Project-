@@ -151,7 +151,8 @@ def _examples(per_item: list, ref_key: str, hyp_key: str, src_key: str | None = 
 
 # --- traduction ---------------------------------------------------------------
 
-def mt_analysis(rows: list[dict], src_key: str, hyp_key: str, ref_key: str) -> dict:
+def mt_analysis(rows: list[dict], src_key: str, hyp_key: str, ref_key: str,
+                cut_key: str | None = None) -> dict:
     rows = [r for r in rows if (r.get(ref_key) or "").strip() and hyp_key in r]
     if not rows:
         return {"n": 0}
@@ -166,6 +167,14 @@ def mt_analysis(rows: list[dict], src_key: str, hyp_key: str, ref_key: str) -> d
     # Recopie : la sortie reprend la phrase source au lieu de la traduire.
     copies = sum(fold(h) == fold(r[src_key]) and bool(h.strip()) for h, r in zip(hyps, rows))
     per_item = [(corpus_score("chrf", stats[i]), r) for i, r in enumerate(rows)]
+    loops = [has_loop(_strict(h)) for h in hyps]
+    extra = {}
+    if cut_key and any(cut_key in r for r in rows):
+        # Arrêtées sur la longueur maximale (eval.baselines, --plafond) : le
+        # plafond doit couper des boucles, pas des traductions légitimes.
+        cut = [i for i, r in enumerate(rows) if r.get(cut_key)]
+        extra = {"coupees": len(cut) / len(rows),
+                 "coupees_en_boucle": float(np.mean([loops[i] for i in cut])) if cut else 0.0}
     return {
         "n": len(rows),
         "chrf": corpus_score("chrf", stats.sum(axis=0)),
@@ -175,7 +184,8 @@ def mt_analysis(rows: list[dict], src_key: str, hyp_key: str, ref_key: str) -> d
         "sorties_vides": float(np.mean([not h.strip() for h in hyps])),
         "sorties_trop_courtes": float(np.mean(ratios < 0.5)),
         "sorties_trop_longues": float(np.mean(ratios >= HALLUCINATION_RATIO)),
-        "boucles": float(np.mean([has_loop(_strict(h)) for h in hyps])),
+        "boucles": float(np.mean(loops)),
+        **extra,
         "recopies_de_la_source": copies / len(rows),
         # Score négatif : pour chrF++, le plus haut est le meilleur.
         "exemples": _examples([(-s, r) for s, r in per_item], ref_key, hyp_key, src_key),
@@ -234,12 +244,13 @@ def analyse_report(path: Path) -> tuple[str, dict]:
     if maillon == "asr" and arch != "e2e":
         out["asr"] = asr_analysis(rows)
         if any("mt_depuis_asr" in r for r in rows):
-            out["mt_depuis_asr"] = mt_analysis(rows, "ref_bm", "mt_depuis_asr", "ref_fr")
+            out["mt_depuis_asr"] = mt_analysis(rows, "ref_bm", "mt_depuis_asr", "ref_fr",
+                                               "coupe_fr")
     elif maillon == "asr":
         out["e2e"] = mt_analysis(rows, "ref_bm", "hyp_fr", "ref_fr")
     elif maillon == "mt":
-        out["bm_fr"] = mt_analysis(rows, "ref_bm", "hyp_fr", "ref_fr")
-        out["fr_bm"] = mt_analysis(rows, "ref_fr", "hyp_bm", "ref_bm")
+        out["bm_fr"] = mt_analysis(rows, "ref_bm", "hyp_fr", "ref_fr", "coupe_fr")
+        out["fr_bm"] = mt_analysis(rows, "ref_fr", "hyp_bm", "ref_bm", "coupe_bm")
     elif maillon is None and arch in ("cascade", "e2e"):  # eval.run_eval
         hyp_bm = "source_bm" if arch == "cascade" else None
         if hyp_bm:
@@ -298,6 +309,11 @@ def to_markdown(name: str, analysis: dict) -> str:
                 f"référence) : {_pct(m['sorties_trop_courtes'])} ; trop longues : "
                 f"{_pct(m['sorties_trop_longues'])} ; boucles : {_pct(m['boucles'])}",
                 f"- Source recopiée sans traduction : {_pct(m['recopies_de_la_source'])}",
+            ]
+            if "coupees" in m:
+                lines.append(f"- Arrêtées sur la longueur maximale : {_pct(m['coupees'])}, "
+                             f"dont {_pct(m['coupees_en_boucle'])} en boucle")
+            lines += [
                 "",
             ]
             lines += _example_lines(m["exemples"], "chrF++", negate=True)

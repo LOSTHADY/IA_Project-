@@ -74,6 +74,17 @@ def test_bootstrap_aligne_sur_les_enonces_communs():
         bootstrap([a, Series("c", "wer", ["9"], wer_stats(["x"], ["y"]))], n_boot=10)
 
 
+def test_meme_identifiant_autre_reference_refuse():
+    """Deux exécutions dont le corpus a changé entre-temps : mêmes
+    identifiants, autres phrases. Le test apparié n'aurait plus de sens."""
+    a = Series("a", "chrf", ["0", "1"], chrf_stats(FR_H[:2], FR_R[:2]), refs=FR_R[:2])
+    b = Series("b", "chrf", ["0", "1"], chrf_stats(FR_H[:2], FR_R[:2]), refs=FR_R[:2])
+    assert bootstrap([a, b], n_boot=10)["n"] == 2
+    moved = Series("c", "chrf", ["0", "1"], chrf_stats(FR_H[2:4], FR_R[2:4]), refs=FR_R[2:4])
+    with pytest.raises(ValueError, match="pas les mêmes échantillons"):
+        bootstrap([a, moved], n_boot=10)
+
+
 # --- tirage par locuteur ------------------------------------------------------
 
 def _voices(n_speakers: int = 10, per_speaker: int = 12) -> Series:

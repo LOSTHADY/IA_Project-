@@ -103,6 +103,25 @@ def test_run_mt_isole_l_ecart_orthographique():
     assert round(report["mt_fr_bm_replie"]["chrf"]) == 100
 
 
+def test_run_mt_compte_les_sorties_coupees():
+    from bambara_voice.config import BAM, FRA, MTConfig
+
+    class Looping(FakeMT):
+        """Vers le bambara, la seconde phrase s'arrête sur la longueur maximale."""
+
+        def translate(self, text):
+            out = super().translate(text)
+            self.last_capped = text == "il tousse"
+            return out
+
+    exs = [Example(id="a", bm="n bɛ taa", fr="je pars"),
+           Example(id="b", bm="a bɛ sɔgɔsɔgɔ", fr="il tousse")]
+    report, rows = baselines.run_mt(exs, FakeMT(MTConfig(src_lang=BAM, tgt_lang=FRA)),
+                                    Looping(MTConfig(src_lang=FRA, tgt_lang=BAM)))
+    assert report["sorties_coupees"] == {"bm_fr": 0.0, "fr_bm": 0.5}
+    assert [r["coupe_bm"] for r in rows] == [False, True]
+
+
 def test_run_tts_ecrit_audio_et_grille_mos(tmp_path):
     report, rows = baselines.run_tts([("tts-000", "i ni ce")], FakeTTS(), tmp_path)
     assert (tmp_path / "tts-000.wav").exists()
@@ -167,3 +186,14 @@ def test_cli_asr_mt_tts_et_tableau(tmp_path, fakes):
     with pytest.raises(SystemExit):
         baselines.main(common + ["asr", "--dataset", str(jeli), "--task", "translate",
                                  "--with-mt"])
+
+
+def test_cli_plafond_de_longueur(tmp_path, fakes):
+    bayel = _bayelemabaga_like(tmp_path / "bayel")
+    out = tmp_path / "results"
+    baselines.main(["--out", str(out), "--device", "cpu", "mt", "--dataset", str(bayel),
+                    "--plafond", "2"])
+    mt = _report(out, "mt")
+    assert mt["nom"].endswith("[plafond ×2]")
+    assert mt["modeles"]["plafond_longueur"] == 2.0
+    assert set(mt["sorties_coupees"]) == {"bm_fr", "fr_bm"}

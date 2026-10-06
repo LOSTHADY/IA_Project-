@@ -190,7 +190,9 @@ Entre parenthèses : nombre de phrases.
    une sortie trop répétitive (taux de compression) et redécoder à
    température plus élevée (Radford et al., 2022).
 2. **NLLB** : mesurer l'effet d'un plafond de longueur générée sur les
-   sorties dégénérées et sur le chrF++.
+   sorties dégénérées, le chrF++ et la latence. Option `--plafond` de
+   `eval.baselines` (désactivée par défaut), expérience dans le workflow
+   « Plafond de longueur NLLB », sur les mêmes phrases que ci-dessus.
 3. **Levier 2** : prévoir l'expérience directe (même contenu, avec et sans
    simplification), les longueurs observées ici ne suffisant pas à conclure.
 
