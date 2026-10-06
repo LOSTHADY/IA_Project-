@@ -25,7 +25,7 @@ tirages (`eval.significance`).
 | Latence moyenne | 4,2 s (RTF 1,64) | 8,3 s avec la traduction (RTF 2,59) |
 
 Écart MMS − Whisper, apparié sur les mêmes énoncés : −102,1 points de WER
-strict [−127,9 ; −79,0], p < 0,001.
+strict [−127,9 ; −79,0], p < 0,002 (aucun des 1 000 tirages n'annule l'écart).
 
 - **Whisper d'origine ne transcrit pas le bambara.** Au-delà de 100 %, le
   WER compte plus d'erreurs que de mots de référence, ce qui suppose de
@@ -199,9 +199,8 @@ seuls les deux taux vers le bambara ont changé.
 2. **NLLB** : plafonner la longueur générée. Fait, et activé par défaut :
    voir la section suivante.
 3. **Levier 2** : expérience directe, les longueurs observées ici ne
-   suffisant pas à conclure. Mêmes phrases longues, traduites entières puis
-   découpées en segments courts (`eval.baselines mt --decoupe`, workflow
-   « Découpage avant traduction »).
+   suffisant pas à conclure. Faite : voir « Découpage avant traduction »
+   ci-dessous.
 
 ### Plafond de longueur de NLLB
 
@@ -259,6 +258,58 @@ le français), p entre 0,002 et 0,026.
   partitions de test n'introduit pas de biais de sélection notable, mais
   cela est signalé ici. Pour reproduire exactement les chiffres de la
   phase 1 : `--plafond 0`.
+
+### Découpage avant traduction (levier 2)
+
+Exécution : workflow « Découpage avant traduction (levier 2) »,
+6 octobre 2026
+([exécution 37399099065](https://github.com/LOSTHADY/IA_Project-/actions/runs/37399099065)) ;
+changements phrase par phrase avec `eval.changes`
+([exécution 37414453973](https://github.com/LOSTHADY/IA_Project-/actions/runs/37414453973)).
+Bayelemabaga, partition de validation : 1 000 paires tirées (graine 0), dont
+588 avec une phrase française d'au moins 12 mots. Chaque phrase est traduite
+vers le bambara entière, puis découpée aux virgules, points-virgules et
+deux-points en segments d'au plus 10 mots, traduits un à un et mis bout à
+bout (`split_for_translation`). 62,6 % des phrases ont été découpées.
+Paramètres fixés à l'avance ; pas de plafond de longueur dans les deux
+variantes (expérience lancée avant son activation).
+
+| Français → bambara, 588 phrases | entières | découpées | écart [IC 95 %] |
+|---|---|---|---|
+| chrF++ | 31,0 [29,9 ; 32,0] | 30,0 [29,0 ; 31,0] | −1,0 [−1,5 ; −0,5], p < 0,002 |
+| chrF++, graphie repliée | 34,9 [33,8 ; 36,1] | 34,4 [33,4 ; 35,5] | −0,5 [−1,1 ; 0,1], n.s. |
+| BLEU | 9,5 | 7,8 | |
+| chrF++, phrases de 8 à 15 mots (183) | 27,9 | 27,7 | |
+| chrF++, phrases de 16 mots et plus (405) | 31,8 | 30,6 | |
+
+Contrôle : bambara → français, traduit de la même façon dans les deux
+variantes, donne les mêmes 588 sorties et le même score (30,2), avec les
+mêmes versions de bibliothèques. Seul le découpage distingue les deux
+colonnes.
+
+- **Découper ne fait pas mieux traduire, plutôt moins bien.** −1,0 point de
+  chrF++, perte concentrée sur les phrases les plus longues, celles que le
+  découpage touche le plus. En graphie repliée, l'écart n'est plus
+  significatif.
+- **Deux mécanismes, visibles sur les sorties** (366 traductions changées) :
+  - *la forme* : chaque morceau reçoit sa majuscule et son point
+    (« … i kosɔn. Ne bɛna … »). Le chrF++ strict et le BLEU le comptent, la
+    forme repliée (sans casse ni ponctuation) non, d'où la différence entre
+    les deux lignes ;
+  - *le fond* : traduit seul, un fragment est complété en phrase, et NLLB y
+    ajoute parfois des mots que la version entière n'avait pas (« O kɔ, … »
+    en tête d'une traduction, « o dɔrɔn tɛ » à la place de « o de ye nin
+    ye » ; gloses à faire vérifier par un locuteur natif).
+- **Conséquence pour la chaîne.** `simplify_for_translation` coupait les
+  phrases de plus de 15 mots et ajoutait un point : elle fabriquait ce même
+  type de fragment, en perdant en plus la fin de la phrase. Elle ne coupe
+  plus par défaut (`LLMConfig.max_words`). Le découpage n'est pas adopté non
+  plus. Restent la consigne du prompt, le retrait de la mise en forme et la
+  limite de trois phrases.
+- **Ce que l'expérience ne dit pas.** Elle découpe après coup des phrases
+  existantes ; elle ne teste pas un LLM qui écrirait d'emblée des phrases
+  courtes et complètes, ni un NLLB affiné. Ces deux questions restent
+  ouvertes (phase 4).
 
 ### Limites
 

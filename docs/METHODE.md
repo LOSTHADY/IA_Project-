@@ -82,21 +82,26 @@ d'évaluation.
 ### Levier 2 — contraindre la sortie du LLM
 
 Un LLM répond spontanément en français élégant : phrases longues,
-subordonnées, vocabulaire abstrait. NLLB fine-tuné sur ~47k paires s'effondre
-dessus. On impose donc des phrases déclaratives courtes et un vocabulaire
-concret, par prompt système **et** par post-traitement dur
-(`bambara_voice.llm.simplify_for_translation`) — un prompt seul n'est jamais
-respecté à 100 %.
+subordonnées, vocabulaire abstrait. Hypothèse de départ : un français simple
+en phrases courtes se traduit mieux vers le bambara. On le demande donc au
+LLM par prompt système, ce qui ne coûte rien. Sa sortie est ensuite
+nettoyée (`bambara_voice.llm.simplify_for_translation`) : mise en forme
+retirée, trois phrases au plus, pour une réponse vocale brève.
 
-Coût nul. L'effet sur la fidélité de la traduction sortante reste à
-quantifier : l'analyse d'erreurs de la phase 1 ne suffit pas, la longueur
-des phrases s'y confondant avec leur type (`docs/RESULTATS.md`). Le
-mécanisme se teste à contenu égal : les phrases françaises longues de
-Bayelemabaga (validation) sont traduites entières, puis découpées aux
-virgules en segments courts (`split_for_translation`), et comparées à la même
-référence bambara (workflow « Découpage avant traduction »). Si le découpage
-aide, il peut aussi remplacer la troncature du post-traitement, qui coupe
-les phrases trop longues et en perd la fin.
+La part « phrases courtes » a été testée à contenu égal, sur NLLB
+zero-shot : les phrases françaises longues de Bayelemabaga (validation),
+traduites entières puis découpées aux virgules en segments courts, contre la
+même référence bambara. Le découpage fait *perdre* 1,0 point de chrF++ :
+chaque morceau reçoit sa majuscule et son point, et NLLB complète les
+fragments en phrases en y ajoutant parfois des mots (`docs/RESULTATS.md`).
+Le post-traitement ne coupe donc plus les phrases trop longues (il le
+faisait à 15 mots, en perdant la fin de la phrase et en fabriquant
+justement ce genre de fragment) ; l'option reste disponible
+(`LLMConfig.max_words`).
+
+Ce que l'expérience ne tranche pas : l'effet de la consigne elle-même,
+c'est-à-dire d'un LLM qui écrit d'emblée des phrases courtes et complètes.
+Il se mesurera sur ses réponses réelles, en phase 4, et sur NLLB affiné.
 
 ### Levier 3 — réponses gabarits validées
 

@@ -43,10 +43,19 @@ def test_orthography_ratio():
 
 # --- simplification de la sortie LLM ---------------------------------------
 
-def test_simplify_coupe_les_phrases_trop_longues():
+def test_simplify_coupe_les_phrases_trop_longues_sur_demande():
     long = " ".join(["mot"] * 40) + "."
     out = simplify_for_translation(long, max_words=15)
     assert len(out.split()) <= 16  # 15 mots + la ponctuation finale
+
+
+def test_simplify_ne_coupe_plus_les_phrases_par_defaut():
+    """La coupure perd la fin de la phrase sans gain mesuré (RESULTATS.md)."""
+    from bambara_voice.config import LLMConfig
+
+    long = " ".join(["mot"] * 40) + "."
+    assert simplify_for_translation(long) == long
+    assert LLMConfig().max_words is None
 
 
 def test_simplify_retire_la_mise_en_forme():

@@ -76,9 +76,9 @@ class MTConfig:
 class LLMConfig:
     """Modèle de dialogue. Traité comme une boîte noire remplaçable.
 
-    Les contraintes de style sont le vrai levier : une réponse en français
-    simple et courte se traduit nettement mieux vers le bambara qu'une réponse
-    élégante. Cf. docs/METHODE.md, levier 2.
+    On lui demande un français simple et des phrases courtes ; l'effet de
+    cette consigne sur la traduction reste à mesurer sur ses réponses réelles
+    (docs/METHODE.md, levier 2).
     """
 
     backend: Literal["transformers", "llamacpp", "echo"] = "transformers"
@@ -86,7 +86,9 @@ class LLMConfig:
     gguf_path: str | None = None  # requis si backend == "llamacpp"
     max_new_tokens: int = 96
     temperature: float = 0.3
-    max_words: int = 15  # contrainte dure sur la longueur des phrases produites
+    # Couper les phrases plus longues ; None : jamais. La coupure perd la fin
+    # de la phrase sans gain mesuré sur la traduction (docs/RESULTATS.md).
+    max_words: int | None = None
     system_prompt: str = (
         "Tu es un assistant vocal. Tes réponses sont traduites automatiquement "
         "vers le bambara, donc elles doivent être faciles à traduire.\n"

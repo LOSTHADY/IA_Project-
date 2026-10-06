@@ -1,9 +1,11 @@
 """Modèle de dialogue — composant délibérément interchangeable.
 
 Le LLM n'est pas l'objet de l'étude : il raisonne en français et sa sortie est
-traduite. Ce qui compte ici, c'est la *contrainte de style* appliquée à sa
-sortie (phrases courtes, français simple), qui améliore nettement la fidélité
-de la traduction sortante sans rien coûter.
+traduite. On lui demande un français simple et des phrases courtes (prompt
+système), et l'on retire de sa sortie ce que la TTS ne saurait pas prononcer.
+L'idée que des phrases plus courtes se traduisent mieux vers le bambara n'a
+pas été confirmée à contenu égal (docs/RESULTATS.md, découpage avant
+traduction) : la sortie n'est donc plus coupée au milieu des phrases.
 
 Trois backends :
   - "transformers" : n'importe quel modèle instruct HF (défaut)
@@ -27,13 +29,15 @@ _MARKUP_RE = re.compile(r"[*_#`|]+")
 _BULLET_RE = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s*", flags=re.MULTILINE)
 
 
-def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int = 3) -> str:
-    """Force la sortie du LLM dans la forme la plus traduisible possible.
+def simplify_for_translation(text: str, max_words: int | None = None,
+                             max_sentences: int = 3) -> str:
+    """Prépare la sortie du LLM pour la traduction et la voix.
 
-    Le prompt système demande déjà des phrases courtes, mais aucun modèle ne
-    respecte une consigne à 100 %. Ce post-traitement est la garantie dure :
-    il coupe les phrases trop longues à la frontière de proposition la plus
-    proche et supprime toute mise en forme.
+    Supprime toute mise en forme et garde au plus `max_sentences` phrases :
+    une réponse vocale doit rester brève. Avec `max_words`, coupe aussi les
+    phrases trop longues à la dernière virgule dans la limite. Ce n'est plus
+    le défaut : la coupure perd la fin de la phrase et fabrique un fragment,
+    que NLLB traduit moins bien que la phrase entière (docs/RESULTATS.md).
     """
     if not text:
         return ""
@@ -47,7 +51,7 @@ def simplify_for_translation(text: str, max_words: int = 15, max_sentences: int 
         if not sentence:
             continue
         words = sentence.split()
-        if len(words) > max_words:
+        if max_words and len(words) > max_words:
             # Couper à la dernière virgule dans la limite, sinon couper net.
             head = words[:max_words]
             cut = max(
@@ -70,9 +74,10 @@ def split_for_translation(text: str, max_words: int = 10, min_words: int = 4) ->
     mots rejoint son voisin. Une phrase sans ponctuation interne reste
     entière : on ne coupe jamais au milieu d'une proposition.
 
-    C'est l'alternative à la troncature de `simplify_for_translation` : même
-    contenu, phrases plus courtes. Son effet sur la traduction se mesure
-    (`eval.baselines mt --decoupe`) avant de s'en servir dans la chaîne.
+    Sert à mesurer l'effet de la seule longueur des phrases sur la
+    traduction (`eval.baselines mt --decoupe`). Mesuré sur NLLB zero-shot :
+    les morceaux se traduisent moins bien que la phrase entière
+    (docs/RESULTATS.md). La chaîne ne s'en sert donc pas.
     """
     segments: list[str] = []
     for sentence in _SENTENCE_RE.split(re.sub(r"\s+", " ", text).strip()):
