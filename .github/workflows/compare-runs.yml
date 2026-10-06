@@ -1,0 +1,83 @@
+# Ce qui change d'une exécution à l'autre, phrase par phrase (eval.changes),
+# puis analyse d'erreurs de la seconde. Ne relance aucun modèle.
+#
+# Par défaut : la phase 1 (sans plafond) contre l'expérience du plafond de
+# longueur NLLB. Si seules les phrases coupées ont changé, l'écart de chrF++
+# mesuré revient bien au plafond, et non à une version de bibliothèque.
+name: Comparer deux exécutions
+
+on:
+  workflow_dispatch:
+    inputs:
+      avant_run:
+        description: "Exécution de référence"
+        default: "36467549375"
+      avant_motif:
+        description: "Ses artefacts"
+        default: "phase1-mt-*"
+      apres_run:
+        description: "Exécution à comparer"
+        default: "37398523459"
+      apres_motif:
+        description: "Ses artefacts"
+        default: "plafond-*"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/compare-runs.yml, eval/changes.py]
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  AVANT_RUN: ${{ inputs.avant_run || '36467549375' }}
+  AVANT_MOTIF: ${{ inputs.avant_motif || 'phase1-mt-*' }}
+  APRES_RUN: ${{ inputs.apres_run || '37398523459' }}
+  APRES_MOTIF: ${{ inputs.apres_motif || 'plafond-*' }}
+
+jobs:
+  comparer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.AVANT_RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: ${{ env.AVANT_MOTIF }}
+          path: avant
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.APRES_RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: ${{ env.APRES_MOTIF }}
+          path: apres
+          merge-multiple: true
+
+      - name: Comparaison et analyse
+        run: |
+          {
+            echo "## Ce qui change d'une exécution à l'autre"
+            echo
+            python -m eval.changes avant/*.json --apres apres/*.json
+            echo
+            echo "## Analyse d'erreurs de l'exécution comparée"
+            echo
+            python -m eval.analysis apres/*.json
+          } | tee changements.md
+          cat changements.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: changements
+          path: changements.md

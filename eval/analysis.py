@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -38,6 +39,10 @@ from .significance import chrf_stats, corpus_score, wer_stats
 LENGTH_BUCKETS = ((1, 3), (4, 7), (8, 15), (16, 10_000))
 HALLUCINATION_RATIO = 2.0   # sortie au moins deux fois plus longue que la référence
 REPEAT_NGRAM, REPEAT_MIN = 3, 3
+# Motif de 2 à 12 caractères répété au moins quatre fois d'affilée : une
+# boucle à l'intérieur d'un « mot » (« sɔgɔsɔgɔsɔgɔsɔgɔ… »). Le redoublement
+# légitime du bambara (munumunu, sɔgɔsɔgɔ) ne répète que deux fois.
+_CHAR_LOOP_RE = re.compile(r"(.{2,12}?)\1{3,}")
 # Champs du jeu de test (eval.dataset) par lesquels découper les scores.
 GROUPS = (("register", "registre"), ("code_switching", "code-switching"),
           ("conditions", "conditions"), ("gender", "genre"), ("speaker", "locuteur"))
@@ -55,11 +60,15 @@ def _bucket(n: int) -> str:
 
 
 def has_loop(text: str, n: int = REPEAT_NGRAM, times: int = REPEAT_MIN) -> bool:
-    """Vrai si un même n-gramme de mots revient au moins `times` fois : la
-    signature des boucles de génération (« a bɛ a bɛ a bɛ… »)."""
+    """Vrai si la sortie porte la signature d'une boucle de génération : un
+    même n-gramme de mots qui revient au moins `times` fois (« a bɛ a bɛ a
+    bɛ… »), ou un motif de caractères répété d'affilée sans espace
+    (« sɔgɔsɔgɔsɔgɔsɔgɔ… »)."""
     words = text.split()
     grams = Counter(tuple(words[i:i + n]) for i in range(len(words) - n + 1))
-    return bool(grams) and grams.most_common(1)[0][1] >= times
+    if grams and grams.most_common(1)[0][1] >= times:
+        return True
+    return bool(_CHAR_LOOP_RE.search(text))
 
 
 # --- ASR ----------------------------------------------------------------------

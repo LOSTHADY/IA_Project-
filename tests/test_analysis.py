@@ -25,6 +25,11 @@ def test_boucles_de_repetition():
     assert has_loop("a bɛ yen a bɛ yen a bɛ yen")
     assert not has_loop("n bɛ taa sugu la")
     assert not has_loop("")
+    # Boucle dans un seul « mot » (pire sortie de NLLB en phase 1), et
+    # redoublement légitime, qui n'en est pas une.
+    assert has_loop("sɔgɔsɔgɔsɔgɔsɔgɔsɔgɔsɔgɔs")
+    assert not has_loop("bama kulela a y'i munumunu")
+    assert not has_loop("a bɛ sɔgɔsɔgɔ")
 
 
 def test_decomposition_redonne_le_wer_de_eval_metrics():
