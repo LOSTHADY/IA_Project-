@@ -357,3 +357,30 @@ Jeli-ASR (test), PyTorch fp32 sur les processeurs de GitHub.
   conditions d'enregistrement ne sont pas ceux de l'assistant, et il servira
   à l'entraînement en phase 3. Les chiffres définitifs se mesureront sur le
   jeu de test maison (phase 2).
+
+## Phase 3 — fine-tuning (en cours)
+
+### Whisper-small multi-tâche, une époque
+
+Notebook `phase3_finetuning.ipynb` sur Colab (GPU T4), 6 octobre 2026 :
+Jeli-ASR, `--task both` (transcription bambara et traduction française),
+une époque, lot de 8 × accumulation 2, taux d'apprentissage 1e-5.
+
+| | |
+|---|---|
+| Étapes | 3 781 |
+| Durée | 2 h 52 (1,9 s par étape) |
+| Perte d'entraînement moyenne | 2,97 |
+| WER de validation (150 énoncés pris dans `train`) | **44,0 %** |
+
+À titre indicatif, sur la partition de test de Jeli-ASR (phase 1) : 160,3 %
+pour Whisper non affiné, 58,2 % pour MMS. Le 44,0 % porte sur une
+validation, avec d'autres énoncés : il ne se compare pas directement. Le
+chiffre de référence sera celui de l'évaluation sur les 300 énoncés de test
+(§7 du notebook), apparié avec MMS sur les mêmes énoncés.
+
+Au chargement du meilleur checkpoint, transformers signale
+`proj_out.weight` manquant : la couche de sortie de Whisper partage ses
+poids avec les plongements du décodeur, et n'est donc pas enregistrée à
+part. L'évaluation sur le test le confirmera (un WER aberrant le
+trahirait).
