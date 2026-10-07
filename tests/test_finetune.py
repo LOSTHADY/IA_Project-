@@ -100,10 +100,8 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
 
     nb = json.loads((ROOT / "notebooks" / "phase3_finetuning.ipynb").read_text(encoding="utf-8"))
     [cell] = [c for c in nb["cells"] if "".join(c["source"]).startswith("# Modèle final")]
-    code = "".join(cell["source"])
-    code = code[:code.index("WHISPER = ")]  # la fonction seule
-    ns: dict = {}
-    exec(code, ns)
+    ns: dict = {"CKPT": str(tmp_path / "drive"), "OUT": str(tmp_path / "resultats")}
+    exec("".join(cell["source"]), ns)
     modele = ns["modele"]
 
     assert modele(str(whisper_ft)) == str(whisper_ft)  # modèle final
@@ -115,6 +113,17 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
     assert modele(str(tmp_path / "rien"), repli="nllb") == "nllb"
     with pytest.raises(FileNotFoundError):
         modele(str(tmp_path / "rien"))
+
+    # Après une coupure : Whisper sur Drive (checkpoint), NLLB pas encore là.
+    shutil.copytree(last, tmp_path / "drive" / "whisper-small-bm" / last.name)
+    whisper, bm2fr, fr2bm = ns["chemins"]()
+    assert whisper.endswith(last.name)
+    assert bm2fr == fr2bm == "facebook/nllb-200-distilled-600M"
+
+    # Une évaluation déjà faite n'est pas refaite.
+    (tmp_path / "resultats").mkdir()
+    (tmp_path / "resultats" / "asr-e2e-1.json").write_text(json.dumps({"nom": "bout-en-bout affiné"}))
+    assert ns["deja"]("bout-en-bout affiné") and not ns["deja"]("cascade affinée")
 
     # Le checkpoint se charge comme un modèle : l'évaluation peut s'en servir.
     from bambara_voice.asr import SpeechRecognizer
