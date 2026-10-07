@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bambara_voice.config import WHISPER_LANG_SLOT as LANG_SLOT  # noqa: E402
 from bambara_voice.normalize import normalize  # noqa: E402
 from eval.corpora import decode_audio  # noqa: E402
+from reprise import last_complete_checkpoint  # noqa: E402
 
 MAX_AUDIO_S = 30.0  # fenêtre de Whisper : au-delà, l'audio serait tronqué
 
@@ -158,7 +159,6 @@ def main() -> None:
         WhisperProcessor, WhisperForConditionalGeneration,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
     )
-    from transformers.trainer_utils import get_last_checkpoint
 
     from eval.corpora import detect_columns, load_any, sample_indices
     from eval.metrics import score_asr, score_mt
@@ -268,7 +268,7 @@ def main() -> None:
         processing_class=processor,
     )
 
-    last = get_last_checkpoint(args.output) if args.resume and Path(args.output).is_dir() else None
+    last = last_complete_checkpoint(args.output) if args.resume else None
     if args.resume:
         print(f"Reprise depuis {last}" if last else "Aucun checkpoint : départ de zéro")
     trainer.train(resume_from_checkpoint=last)

@@ -376,11 +376,55 @@ une époque, lot de 8 × accumulation 2, taux d'apprentissage 1e-5.
 À titre indicatif, sur la partition de test de Jeli-ASR (phase 1) : 160,3 %
 pour Whisper non affiné, 58,2 % pour MMS. Le 44,0 % porte sur une
 validation, avec d'autres énoncés : il ne se compare pas directement. Le
-chiffre de référence sera celui de l'évaluation sur les 300 énoncés de test
-(§7 du notebook), apparié avec MMS sur les mêmes énoncés.
+chiffre de référence est celui de l'évaluation sur les 300 énoncés de test
+(§6 du notebook, ci-dessous), apparié avec MMS sur les mêmes énoncés.
 
 Au chargement du meilleur checkpoint, transformers signale
 `proj_out.weight` manquant : la couche de sortie de Whisper partage ses
 poids avec les plongements du décodeur, et n'est donc pas enregistrée à
 part. L'évaluation sur le test le confirmera (un WER aberrant le
 trahirait).
+
+**Incident de reprise (7 octobre).** Le modèle final et le dernier
+checkpoint de cet entraînement ne sont jamais arrivés sur Drive (copie
+inachevée à l'arrêt de la session, ou Drive plein). La session suivante a
+repris au checkpoint 3000, auquel il manquait l'état de l'optimiseur : le
+Trainer est reparti sans prévenir avec un optimiseur et un plan de taux
+d'apprentissage neufs, d'où un second préchauffage et des 781 dernières
+étapes au taux maximal (WER de validation 48,9 % à la fin, contre 44,0 %).
+Le modèle retenu reste le meilleur checkpoint selon la validation ; lequel
+exactement est à confirmer (cellule « Quel modèle Whisper est sur Drive ? »
+du notebook). Corrigé depuis : la reprise ignore un checkpoint incomplet, et
+le notebook attend que Drive ait tout reçu après chaque entraînement.
+
+### Premiers résultats sur le test, avant le fine-tuning de NLLB
+
+Notebook §6, 7 octobre 2026, GPU T4 : Jeli-ASR, partition de test, les
+mêmes 300 énoncés qu'en phase 1 (même graine). NLLB n'est pas encore affiné :
+la cascade utilise le modèle d'origine.
+
+| | MMS + NLLB (zero-shot) | Cascade : Whisper affiné + NLLB | Bout-en-bout : Whisper affiné |
+|---|---|---|---|
+| WER strict | 58,2 % | 56,3 % | — |
+| WER relâché | 54,8 % | 54,2 % | — |
+| CER strict | 25,7 % | 29,3 % | — |
+| chrF++ du français, depuis l'audio | 18,03 | 18,45 | **19,93** |
+| BLEU, depuis l'audio | 0,91 | 1,35 | 3,03 |
+| Perte due à l'ASR (chrF++) | 4,89 | 4,47 | — |
+| Latence moyenne (T4) | 1,59 s | 1,10 s | 0,48 s |
+
+Le chrF++ porte sur 293 énoncés (ceux qui ont une traduction de référence).
+
+- **Reconnaissance.** Whisper affiné fait à peine mieux que MMS en WER
+  (−1,9 point) et moins bien en CER (+3,6 points) : il trouve un peu plus de
+  mots entiers, mais ses erreurs s'éloignent davantage de la référence. Le
+  44 % de validation était donc optimiste : cette validation est prise dans
+  `train`, probablement avec les mêmes locuteurs.
+- **Comparaison centrale.** Le bout-en-bout dépasse la cascade de 1,5 point
+  de chrF++ (19,9 contre 18,4), en deux fois moins de temps. Écart à
+  confirmer par le test de significativité, et provisoire : NLLB affiné
+  devrait surtout profiter à la cascade.
+- **À refaire.** Le rapport de la cascade a été écrit hors de Drive (bug
+  d'apostrophe dans le libellé, corrigé) : ses détails phrase par phrase
+  sont perdus, et avec eux la significativité et l'analyse d'erreurs. Il
+  sera recalculé à la prochaine session (8 minutes).

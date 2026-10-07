@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bambara_voice.config import BAM, FRA  # noqa: E402
 from eval.corpora import BAYELEMABAGA  # noqa: E402
+from reprise import last_complete_checkpoint  # noqa: E402
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -41,6 +42,10 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--grad-accum", type=int, default=2)
     p.add_argument("--lr", type=float, default=3e-5)
+    p.add_argument("--optim", default="adafactor",
+                   help="adafactor : état d'optimiseur quasi nul. Avec AdamW (adamw_torch), "
+                        "NLLB-600M dépasse les 15 Go d'un T4 dès un lot de phrases longues "
+                        "(vocabulaire de 256k : logits de 1 Go par lot de 8 × 128)")
     p.add_argument("--max-length", type=int, default=128)
     p.add_argument("--max-samples", type=int, default=None)
     p.add_argument("--save-steps", type=int, default=500,
@@ -60,7 +65,6 @@ def main() -> None:
     output = args.output or f"checkpoints/nllb-{args.direction}"
 
     import torch
-    from transformers.trainer_utils import get_last_checkpoint
     from transformers import (
         AutoTokenizer, AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
@@ -137,6 +141,7 @@ def main() -> None:
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
+        optim=args.optim,
         num_train_epochs=args.epochs,
         fp16=torch.cuda.is_available(),
         eval_strategy="steps",
@@ -165,7 +170,7 @@ def main() -> None:
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
     )
-    last = get_last_checkpoint(output) if args.resume and Path(output).is_dir() else None
+    last = last_complete_checkpoint(output) if args.resume else None
     if args.resume:
         print(f"Reprise depuis {last}" if last else "Aucun checkpoint : départ de zéro")
     trainer.train(resume_from_checkpoint=last)

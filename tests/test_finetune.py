@@ -73,13 +73,30 @@ def nllb_ft(work):
                      "--output", str(outs[direction]))
         assert "translation.bam" in log  # colonne imbriquée détectée
         # Checkpoints réguliers : une session coupée ne perd pas tout.
-        assert list(outs[direction].glob("checkpoint-*"))
+        checkpoints = list(outs[direction].glob("checkpoint-*"))
+        assert checkpoints
+        # Adafactor (seconds moments factorisés), pas AdamW : NLLB doit
+        # tenir dans la mémoire d'un T4.
+        import torch
+        state = torch.load(checkpoints[0] / "optimizer.pt", weights_only=True)["state"]
+        assert any("exp_avg_sq_row" in v for v in state.values())
+        assert not any("exp_avg" in v for v in state.values())
     return outs
 
 
 def test_whisper_sauve_un_modele_rechargeable(whisper_ft):
     assert (whisper_ft / "model.safetensors").exists()
     assert list(whisper_ft.glob("checkpoint-*"))
+
+
+def test_le_notebook_n_a_pas_d_apostrophe_dans_les_commandes():
+    # IPython ne remplace pas $VAR quand une apostrophe suit sur la ligne
+    # (il la croit entre guillemets simples) : « --label "NLLB d'origine" »
+    # a ainsi envoyé un rapport hors de $OUT, le 7 octobre 2026.
+    nb = json.loads((ROOT / "notebooks" / "phase3_finetuning.ipynb").read_text(encoding="utf-8"))
+    shell = [line for c in nb["cells"] if c["cell_type"] == "code"
+             for line in "".join(c["source"]).splitlines() if line.lstrip().startswith("!")]
+    assert shell and not [line for line in shell if "'" in line]
 
 
 def test_le_notebook_estime_la_duree_d_apres_l_essai(whisper_ft, capsys):
@@ -134,12 +151,40 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
     assert isinstance(rec.transcribe(np.zeros(16_000, dtype=np.float32)).text, str)
 
 
-def test_whisper_reprend_au_dernier_checkpoint(work, whisper_ft):
-    log = _train("finetune_whisper.py", "--dataset", str(work["speech"]),
-                 "--model", str(work["whisper"]), "--task", "both", "--warmup", "0",
-                 "--save-steps", "4", "--eval-samples", "3", "--num-workers", "0",
-                 "--epochs", "2", "--output", str(whisper_ft), "--resume")
-    assert "Reprise depuis" in log and "checkpoint-" in log
+def test_whisper_reprend_au_dernier_checkpoint_complet(work, whisper_ft):
+    import shutil
+    from transformers.trainer_utils import get_last_checkpoint
+
+    # Copie vers Drive interrompue : le checkpoint le plus récent n'a pas son
+    # plan de taux d'apprentissage. Le Trainer repartirait avec un plan neuf.
+    last = Path(get_last_checkpoint(str(whisper_ft)))
+    incomplete = whisper_ft / "checkpoint-99999"
+    shutil.copytree(last, incomplete)
+    (incomplete / "scheduler.pt").unlink()
+    try:
+        log = _train("finetune_whisper.py", "--dataset", str(work["speech"]),
+                     "--model", str(work["whisper"]), "--task", "both", "--warmup", "0",
+                     "--save-steps", "4", "--eval-samples", "3", "--num-workers", "0",
+                     "--epochs", "2", "--output", str(whisper_ft), "--resume")
+    finally:
+        shutil.rmtree(incomplete, ignore_errors=True)
+    assert "Checkpoint incomplet, ignoré : checkpoint-99999 (manque : scheduler.pt)" in log
+    assert f"Reprise depuis {last}" in log
+
+
+def test_reprise_sans_checkpoint_complet(tmp_path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from reprise import last_complete_checkpoint
+
+    assert last_complete_checkpoint(tmp_path / "absent") is None
+    ck = tmp_path / "checkpoint-10"
+    ck.mkdir()
+    for name in ("trainer_state.json", "optimizer.pt", "scheduler.pt"):
+        (ck / name).write_text("{}")
+    assert last_complete_checkpoint(tmp_path) is None  # pas de poids
+    (ck / "model.safetensors").write_text("")
+    (tmp_path / "checkpoint-20").mkdir()  # vide : copie à peine commencée
+    assert last_complete_checkpoint(tmp_path) == str(ck)
 
 
 def test_nllb_impose_la_langue_cible(nllb_ft):
