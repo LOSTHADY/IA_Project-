@@ -58,6 +58,21 @@ jobs:
               print(f"- {f}")
           print(f"\n## Fiche de {repo}\n")
           print(open(hf_hub_download(repo, "README.md"), encoding="utf-8").read())
+
+          # Lignée du modèle : données d'entraînement de chaque version.
+          import re
+          for v in range(4):
+              other = f"RobotsMali/soloni-114m-tdt-ctc-v{v}"
+              if other == repo:
+                  continue
+              card = open(hf_hub_download(other, "README.md"), encoding="utf-8").read()
+              print(f"\n## {other} : données\n")
+              head = card.split("---")[1] if card.startswith("---") else ""
+              print("\n".join(l for l in head.splitlines()
+                              if re.match(r"\s*(- |datasets|base_model|name|split|value)", l)))
+              for title in ("## Dataset", "## Training"):
+                  if title in card:
+                      print(card.split(title, 1)[1].split("\n## ", 1)[0].strip()[:1500])
           EOF
       - uses: actions/upload-artifact@v4
         with:
