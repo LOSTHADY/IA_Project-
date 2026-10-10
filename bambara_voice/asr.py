@@ -124,17 +124,55 @@ class SpeechRecognizer:
         from nemo.collections.asr.models import ASRModel
 
         cfg = self.config
+        device = torch.device(self.device)
         logger.info("Chargement ASR NeMo %s (décodeur %s) sur %s",
                     cfg.model_id, cfg.nemo_decoder or "par défaut", self.device)
         if cfg.model_id.endswith(".nemo"):
-            model = ASRModel.restore_from(cfg.model_id, map_location=torch.device(self.device))
+            model = ASRModel.restore_from(cfg.model_id, map_location=device)
         else:
-            model = ASRModel.from_pretrained(model_name=cfg.model_id,
-                                             map_location=torch.device(self.device))
-        if cfg.nemo_decoder:
-            model.change_decoding_strategy(decoder_type=cfg.nemo_decoder)
+            try:
+                model = ASRModel.from_pretrained(model_name=cfg.model_id, map_location=device)
+            except Exception as err:
+                if "key_phrase_items_list" not in str(err):
+                    raise
+                model = self._load_nemo_patched(ASRModel, device)
+        if cfg.nemo_decoder == "ctc":
+            model.change_decoding_strategy(decoder_type="ctc",
+                                           decoding_cfg=model.cfg.aux_ctc.decoding)
+        elif device.type == "cuda":
+            # Fiche de Soloni : les graphes CUDA du décodeur TDT échouent sur
+            # certains GPU (« CUDA error: invalid argument »).
+            from omegaconf import open_dict
+
+            decoding = model.cfg.decoding
+            with open_dict(decoding):
+                decoding.greedy.use_cuda_graph_decoder = False
+            model.change_decoding_strategy(decoding_cfg=decoding)
         model.eval()
         self._model = model
+
+    def _load_nemo_patched(self, ASRModel, device):
+        """Modèle enregistré avec NeMo 2.5, chargé par une version plus
+        récente : le schéma de décodage exige `key_phrase_items_list`.
+        Contournement donné par la fiche de Soloni (NVIDIA-NeMo/Speech#15658)."""
+        import tempfile
+
+        from omegaconf import OmegaConf
+
+        logger.warning("%s : configuration NeMo ancienne, chargement avec correctif",
+                       self.config.model_id)
+        conf = ASRModel.from_pretrained(self.config.model_id, return_config=True)
+        OmegaConf.set_struct(conf, False)
+        for decoder in ("greedy", "beam"):
+            tree = OmegaConf.select(conf, f"decoding.{decoder}.boosting_tree")
+            if tree is not None:
+                tree.key_phrase_items_list = None
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            OmegaConf.save(conf, path)
+            return ASRModel.from_pretrained(model_name=self.config.model_id,
+                                            override_config_path=str(path),
+                                            map_location=device, strict=False)
 
     def transcribe(self, audio: np.ndarray | str | Path) -> ASRResult:
         self._ensure_loaded()

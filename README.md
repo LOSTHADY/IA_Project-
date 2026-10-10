@@ -105,8 +105,15 @@ dépôt public. Il faut compter quelques heures. Le tableau et les
 intervalles de confiance s'affichent dans le résumé de l'exécution ; les
 rapports et les audios à noter sont dans les artefacts.
 
+Troisième modèle de reconnaissance pour la cascade : Soloni, de RobotsMali
+(Parakeet de NVIDIA affiné sur le bambara, 114 millions de paramètres). Le
+workflow [« Soloni dans la cascade »](.github/workflows/soloni.yml) le mesure
+sur les mêmes énoncés que MMS, sur les processeurs de GitHub. Il demande
+NeMo : `pip install "nemo_toolkit[asr]"`.
+
 ```bash
 python -m eval.baselines asr --model facebook/mms-1b-all --kind ctc --target-lang bam --with-mt
+python -m eval.baselines asr --model RobotsMali/soloni-114m-tdt-ctc-v3 --kind nemo --with-mt
 python -m eval.baselines mt --dataset RobotsMaliAI/bayelemabaga
 python -m eval.compare eval/results/zero-shot-*.json
 ```
@@ -196,7 +203,8 @@ ordres de grandeur : [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md).
 bambara_voice/     pipeline d'inférence
   config.py        identifiants de modèles et fichier de déploiement (--config)
   normalize.py     normalisation et repli orthographique du bambara
-  asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC)
+  asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC),
+                   Soloni (NeMo)
   mt.py            NLLB bambara <-> français
   llm.py           modèle de dialogue + contrainte de style traduisible
   tts.py           synthèse vocale bambara

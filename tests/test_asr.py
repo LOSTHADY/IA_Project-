@@ -203,8 +203,10 @@ def _fake_nemo(monkeypatch, output):
             calls["eval"] = True
             return self
 
-        def change_decoding_strategy(self, decoder_type=None):
-            calls["decoder"] = decoder_type
+        cfg = types.SimpleNamespace(aux_ctc=types.SimpleNamespace(decoding="ctc-cfg"))
+
+        def change_decoding_strategy(self, decoding_cfg=None, decoder_type=None):
+            calls["decoder"] = (decoder_type, decoding_cfg)
 
         def transcribe(self, audio, batch_size=1, verbose=True):
             data, sr = sf.read(audio[0])  # le fichier existe pendant l'appel
@@ -213,7 +215,17 @@ def _fake_nemo(monkeypatch, output):
 
     class ASRModel:
         @staticmethod
-        def from_pretrained(model_name, map_location=None):
+        def from_pretrained(model_name, map_location=None, return_config=False,
+                            override_config_path=None, strict=True):
+            if calls.get("ancien") and override_config_path is None:
+                if return_config:
+                    from omegaconf import OmegaConf
+                    return OmegaConf.create({"decoding": {
+                        "greedy": {"boosting_tree": {"key_phrase_items_list": [1]}},
+                        "beam": {"boosting_tree": {"key_phrase_items_list": [2]}}}})
+                raise ValueError("Missing key key_phrase_items_list")
+            if override_config_path:
+                calls["patched"] = (open(override_config_path).read(), strict)
             calls["loaded"] = (model_name, str(map_location))
             return FakeModel()
 
@@ -239,7 +251,17 @@ def test_nemo_anciennes_sorties_et_decodeur_ctc(monkeypatch):
     calls = _fake_nemo(monkeypatch, (["i ni ce"], [["i ni ce"]]))
     rec = SpeechRecognizer(ASRConfig(kind="nemo", nemo_decoder="ctc"))
     assert rec.transcribe(AUDIO).text == "i ni ce"
-    assert calls["decoder"] == "ctc"
+    assert calls["decoder"] == ("ctc", "ctc-cfg")
+
+
+def test_nemo_charge_un_modele_enregistre_avec_un_ancien_nemo(monkeypatch):
+    pytest.importorskip("omegaconf")
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")])
+    calls["ancien"] = True
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloni", kind="nemo"))
+    assert rec.transcribe(AUDIO).text == "a bɛ yen"
+    config, strict = calls["patched"]
+    assert config.count("key_phrase_items_list: null") == 2 and strict is False
 
 
 def test_nemo_refuse_la_traduction(monkeypatch):

@@ -75,7 +75,7 @@ jobs:
           - nom: soloni
             nemo: true
             args: >-
-              --label "Soloni + NLLB zero-shot"
+              --label "Soloni + NLLB non affiné"
               asr --dataset RobotsMali/jeli-asr --model $MODELE --kind nemo
               --with-mt --limit $LIMITE
           - nom: mms
@@ -147,7 +147,7 @@ jobs:
             echo "### L'écart est-il réel ?"
             echo
             python -m eval.significance results/asr-*.json \
-              --noms "MMS + NLLB zero-shot" "Soloni + NLLB zero-shot"
+              --noms "MMS + NLLB zero-shot" "Soloni + NLLB non affiné"
             echo
             echo "### Analyse d'erreurs"
             echo
