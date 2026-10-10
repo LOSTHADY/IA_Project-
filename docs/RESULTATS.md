@@ -445,3 +445,59 @@ Le chrF++ porte sur 293 énoncés (ceux qui ont une traduction de référence).
   d'apostrophe dans le libellé, corrigé) : ses détails phrase par phrase
   sont perdus, et avec eux la significativité et l'analyse d'erreurs. Il
   sera recalculé à la prochaine session (8 minutes).
+
+### Soloni (RobotsMali), troisième reconnaissance de la cascade
+
+Workflow « Soloni dans la cascade », 10 octobre 2026, processeurs de GitHub :
+`RobotsMali/soloni-114m-tdt-ctc-v3` (Parakeet de NVIDIA, 114 millions de
+paramètres, affiné par RobotsMali ; décodeur TDT par défaut), suivi de NLLB
+d'origine. Mêmes 300 énoncés de test de Jeli-ASR (graine 0) ; MMS rejoué
+dans la même exécution, avec le même code.
+
+| | MMS + NLLB | Soloni + NLLB | Écart (IC à 95 %) |
+|---|---|---|---|
+| WER strict | 58,2 % | **45,5 %** | −12,7 [−16,0 ; −9,7], p < 0,002 |
+| WER relâché | 54,8 % | **43,4 %** | −11,4 [−14,7 ; −8,4], p < 0,002 |
+| CER strict | 25,7 % | 24,7 % | |
+| chrF++ du français, depuis l'audio | 18,0 | **20,5** | +2,4 [1,3 ; 3,6], p < 0,002 |
+| Perte due à l'ASR (chrF++) | 4,9 | **2,5** | |
+| Latence totale, CPU | 8,8 s | **5,7 s** | |
+
+- **Reconnaissance.** Soloni est de loin le meilleur des trois : 13 points
+  de WER de moins que MMS, et 11 de moins que notre Whisper affiné (56,3 %,
+  modèle du 7 octobre, mesuré à part). Il divise par deux ce que les erreurs
+  de reconnaissance coûtent à la traduction.
+- **Comparaison centrale.** Avec Soloni, la cascade atteint 20,5 de chrF++,
+  au-dessus du bout-en-bout du 7 octobre (19,9). Les deux n'ont pas été
+  mesurés dans la même exécution : le test apparié se fera dans le notebook
+  (§6), avec le Whisper réentraîné le 10 octobre.
+- **Déploiement.** La reconnaissance prend 0,58 s par énoncé sur un
+  processeur, pour 114 millions de paramètres. C'est NLLB qui domine la
+  latence de la cascade (environ 5 s sur CPU).
+
+**Données d'entraînement de Soloni.** D'après les fiches des modèles : v0,
+l'ancêtre de toutes les versions, a été affiné sur bam-asr-early (37 h,
+tirées à 87 % de Jeli-ASR) ; v1 et v3 sur Kunkado (environ 40 h relues) ; v2
+sur African Next Voices (100 h). `eval.recouvrement` compte nos phrases de
+test qui figurent telles quelles, après repli orthographique, dans un jeu
+d'entraînement :
+
+| Jeu d'entraînement | Phrases de test d'au moins 5 mots retrouvées | Toutes longueurs |
+|---|---|---|
+| bam-asr-early (Soloni v0) | 63 sur 256 (24,6 %) | 89 sur 300 |
+| Jeli-ASR, partition train (notre Whisper) | 62 sur 256 (24,2 %) | 87 sur 300 |
+
+Un quart des phrases de test longues de Jeli-ASR figurent donc déjà dans sa
+propre partition d'entraînement : à écrire dans les limites du mémoire, car
+cela vaut pour notre Whisper comme pour Soloni. Soloni n'a pas vu plus de
+nos phrases que notre Whisper, mais MMS n'en a vu aucune. D'où la même
+comparaison sans les 89 énoncés vus (workflow « Soloni, phrases jamais
+vues ») :
+
+| Sur 211 énoncés jamais vus | MMS + NLLB | Soloni + NLLB | Écart (IC à 95 %) |
+|---|---|---|---|
+| WER strict | 61,0 % | **46,4 %** | −14,6 [−17,5 ; −11,8], p < 0,002 |
+| chrF++ du français, depuis l'audio | 17,9 | **20,7** | +2,7 [1,5 ; 4,1], p < 0,002 |
+
+L'avance de Soloni ne vient pas des phrases déjà vues : elle est même un
+peu plus nette sans elles.
