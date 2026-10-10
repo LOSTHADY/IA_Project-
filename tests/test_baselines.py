@@ -210,6 +210,20 @@ def test_cli_asr_mt_tts_et_tableau(tmp_path, fakes):
     with pytest.raises(SystemExit):
         baselines.main(common + ["asr", "--dataset", str(jeli), "--task", "translate",
                                  "--with-mt"])
+    with pytest.raises(SystemExit):
+        baselines.main(common + ["asr", "--dataset", str(jeli), "--task", "translate",
+                                 "--kind", "nemo"])
+
+
+def test_cli_asr_nemo(tmp_path, fakes):
+    jeli = _jeli_like(tmp_path / "jeli")
+    out = tmp_path / "results"
+    baselines.main(["--out", str(out), "--device", "cpu", "asr", "--dataset", str(jeli),
+                    "--model", "RobotsMali/soloni-114m-tdt-ctc-v1", "--kind", "nemo",
+                    "--nemo-decoder", "ctc", "--with-mt"])
+    asr = _report(out, "asr-cascade")
+    assert asr["nom"] == "soloni-114m-tdt-ctc-v1 + nllb-200-distilled-600M"
+    assert asr["modeles"]["kind"] == "nemo" and asr["modeles"]["nemo_decoder"] == "ctc"
 
 
 def test_cli_plafond_de_longueur(tmp_path, fakes):

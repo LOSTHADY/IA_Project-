@@ -9,6 +9,10 @@ Les modèles CTC (wav2vec2, MMS) sont aussi pris en charge, en transcription
 seule : `facebook/mms-1b-all` couvre le bambara sans fine-tuning et fournit la
 référence zero-shot la plus sérieuse côté ASR.
 
+Les modèles NeMo aussi (`kind="nemo"`), en transcription seule : Soloni, de
+RobotsMali, est un Parakeet de NVIDIA (114 millions de paramètres) affiné sur
+le bambara. NeMo est une dépendance lourde, importée seulement pour eux.
+
 Pour le déploiement CPU, un Whisper converti par `scripts/export_cpu.py`
 tourne sous CTranslate2 (`backend="ctranslate2"`, int8) : même modèle, mêmes
 tokens de langue et de tâche, 4 fois plus léger. Le décodage va environ deux
@@ -64,6 +68,8 @@ class SpeechRecognizer:
             self._load_ct2()
         elif self.config.kind == "ctc":
             self._load_ctc()
+        elif self.config.kind == "nemo":
+            self._load_nemo()
         else:
             self._load_whisper()
 
@@ -113,6 +119,23 @@ class SpeechRecognizer:
         ).to(self.device)
         self._model.eval()
 
+    def _load_nemo(self) -> None:
+        import torch
+        from nemo.collections.asr.models import ASRModel
+
+        cfg = self.config
+        logger.info("Chargement ASR NeMo %s (décodeur %s) sur %s",
+                    cfg.model_id, cfg.nemo_decoder or "par défaut", self.device)
+        if cfg.model_id.endswith(".nemo"):
+            model = ASRModel.restore_from(cfg.model_id, map_location=torch.device(self.device))
+        else:
+            model = ASRModel.from_pretrained(model_name=cfg.model_id,
+                                             map_location=torch.device(self.device))
+        if cfg.nemo_decoder:
+            model.change_decoding_strategy(decoder_type=cfg.nemo_decoder)
+        model.eval()
+        self._model = model
+
     def transcribe(self, audio: np.ndarray | str | Path) -> ASRResult:
         self._ensure_loaded()
         cfg = self.config
@@ -122,6 +145,8 @@ class SpeechRecognizer:
 
         if cfg.backend == "ctranslate2":
             text = self._decode_ct2(audio)
+        elif cfg.kind == "nemo":
+            text = self._decode_nemo(audio)
         else:
             inputs = self._processor(
                 audio, sampling_rate=cfg.sample_rate, return_tensors="pt"
@@ -146,6 +171,24 @@ class SpeechRecognizer:
             logits = self._model(**inputs).logits
         ids = torch.argmax(logits, dim=-1)
         return self._processor.batch_decode(ids)[0]
+
+    def _decode_nemo(self, audio: np.ndarray) -> str:
+        import tempfile
+
+        import soundfile as sf
+
+        if self.config.task == "translate":
+            raise ValueError("un modèle NeMo (Soloni) ne sait que transcrire")
+        # Un fichier temporaire : la seule entrée que toutes les versions de
+        # NeMo acceptent.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audio.wav")
+            sf.write(path, audio, self.config.sample_rate)
+            out = self._model.transcribe([path], batch_size=1, verbose=False)
+        if isinstance(out, tuple):  # modèles hybrides, anciennes versions : (meilleures, toutes)
+            out = out[0]
+        hyp = out[0]
+        return getattr(hyp, "text", hyp)  # Hypothesis récent, str autrefois
 
     def _decode_whisper(self, inputs) -> str:
         import torch

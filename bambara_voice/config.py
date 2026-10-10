@@ -35,8 +35,9 @@ class ASRConfig:
       - "transcribe" : audio bm -> texte bm, puis MT séparée (cascade)
       - "translate"  : audio bm -> texte fr directement (bout-en-bout)
 
-    `kind` choisit la famille de modèle : "whisper" (seq2seq, les deux tâches)
-    ou "ctc" (wav2vec2 / MMS, transcription seule — cascade uniquement).
+    `kind` choisit la famille de modèle : "whisper" (seq2seq, les deux tâches),
+    "ctc" (wav2vec2 / MMS) ou "nemo" (Soloni de RobotsMali, NeMo) ; ces deux
+    derniers en transcription seule, donc cascade uniquement.
     """
 
     model_id: str = "openai/whisper-small"
@@ -45,8 +46,11 @@ class ASRConfig:
     sample_rate: int = 16_000
     beam_size: int = 1  # 1 = greedy, suffisant et bien plus rapide sur CPU
     max_new_tokens: int = 200
-    kind: Literal["whisper", "ctc"] = "whisper"
+    kind: Literal["whisper", "ctc", "nemo"] = "whisper"
     target_lang: str | None = None  # adaptateur de langue MMS, ex. "bam"
+    # NeMo hybride (Soloni : TDT et CTC) : None garde le décodeur par défaut
+    # du modèle (TDT), "ctc" prend l'autre, plus rapide.
+    nemo_decoder: str | None = None
     # "ctranslate2" : modèle converti par scripts/export_cpu.py (int8 sur CPU,
     # cf. docs/DEPLOIEMENT.md pour les gains mesurés). Whisper uniquement.
     backend: Literal["transformers", "ctranslate2"] = "transformers"
@@ -143,8 +147,9 @@ class PipelineConfig:
 
     def __post_init__(self) -> None:
         if self.architecture == "e2e":
-            if self.asr.kind == "ctc":
-                raise ValueError("un modèle CTC ne traduit pas : la variante e2e exige Whisper")
+            if self.asr.kind != "whisper":
+                raise ValueError(f"un modèle {self.asr.kind.upper()} ne traduit pas : "
+                                 f"la variante e2e exige Whisper")
             # En bout-en-bout, l'ASR produit déjà du français : pas de MT entrante.
             self.asr.task = "translate"
 

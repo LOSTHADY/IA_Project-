@@ -181,3 +181,72 @@ def test_ctc_charge_l_adaptateur_mms(monkeypatch, tmp_path):
     assert seen["processor"] == {"target_lang": "bam"}
     assert seen["model"]["target_lang"] == "bam"
     assert seen["model"]["ignore_mismatched_sizes"] is True
+
+
+# --- NeMo (Soloni) ------------------------------------------------------------
+
+class _Hypothesis:
+    def __init__(self, text):
+        self.text = text
+
+
+def _fake_nemo(monkeypatch, output):
+    """Un faux paquet nemo : NeMo est trop lourd pour les tests."""
+    import types
+
+    import soundfile as sf
+
+    calls: dict = {}
+
+    class FakeModel:
+        def eval(self):
+            calls["eval"] = True
+            return self
+
+        def change_decoding_strategy(self, decoder_type=None):
+            calls["decoder"] = decoder_type
+
+        def transcribe(self, audio, batch_size=1, verbose=True):
+            data, sr = sf.read(audio[0])  # le fichier existe pendant l'appel
+            calls["audio"] = (len(data), sr, verbose)
+            return output
+
+    class ASRModel:
+        @staticmethod
+        def from_pretrained(model_name, map_location=None):
+            calls["loaded"] = (model_name, str(map_location))
+            return FakeModel()
+
+    names = ["nemo", "nemo.collections", "nemo.collections.asr", "nemo.collections.asr.models"]
+    for name in names:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    sys.modules["nemo.collections.asr.models"].ASRModel = ASRModel
+    return calls
+
+
+def test_nemo_transcrit_depuis_un_fichier_temporaire(monkeypatch):
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("  a bɛ  yen ")])
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloni", kind="nemo", language=None))
+    res = rec.transcribe(AUDIO)
+    assert res.text == "a bɛ yen" and res.language == "bm"
+    assert calls["loaded"] == ("RobotsMali/soloni", "cpu") and calls["eval"]
+    assert calls["audio"] == (16_000, 16_000, False)
+    assert "decoder" not in calls  # décodeur par défaut (TDT)
+
+
+def test_nemo_anciennes_sorties_et_decodeur_ctc(monkeypatch):
+    # Anciennes versions de NeMo, modèles hybrides : (meilleures, toutes), en texte.
+    calls = _fake_nemo(monkeypatch, (["i ni ce"], [["i ni ce"]]))
+    rec = SpeechRecognizer(ASRConfig(kind="nemo", nemo_decoder="ctc"))
+    assert rec.transcribe(AUDIO).text == "i ni ce"
+    assert calls["decoder"] == "ctc"
+
+
+def test_nemo_refuse_la_traduction(monkeypatch):
+    _fake_nemo(monkeypatch, [_Hypothesis("x")])
+    rec = SpeechRecognizer(ASRConfig(kind="nemo", task="translate"))
+    with pytest.raises(ValueError, match="NeMo"):
+        rec.transcribe(AUDIO)
+    with pytest.raises(ValueError, match="NEMO"):
+        e2e_config(asr=ASRConfig(kind="nemo"))
+
