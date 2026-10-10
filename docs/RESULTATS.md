@@ -385,19 +385,36 @@ poids avec les plongements du décodeur, et n'est donc pas enregistrée à
 part. L'évaluation sur le test le confirmera (un WER aberrant le
 trahirait).
 
-**Incident de reprise (7 octobre).** Le modèle final et le dernier
-checkpoint de cet entraînement ne sont jamais arrivés sur Drive (copie
-inachevée à l'arrêt de la session, ou Drive plein). La session suivante a
-repris au checkpoint 3000, auquel il manquait l'état de l'optimiseur : le
-Trainer est reparti sans prévenir avec un optimiseur et un plan de taux
-d'apprentissage neufs, d'où un second préchauffage et des 781 dernières
-étapes au taux maximal (WER de validation 48,9 % à la fin, contre 44,0 %).
-Le modèle retenu reste le meilleur checkpoint selon la validation ; lequel
-exactement est à confirmer (cellule « Quel modèle Whisper est sur Drive ? »
-du notebook). Corrigé depuis : la reprise ignore un checkpoint incomplet, et
-le notebook attend que Drive ait tout reçu après chaque entraînement.
+**Incidents de Drive (6 au 10 octobre).** Le modèle final et les derniers
+checkpoints de cet entraînement ne sont jamais arrivés sur Drive. Cause
+probable : Drive plein. Les checkpoints remplacés pendant l'entraînement
+(environ 3 Go chacun, un toutes les 500 étapes) vont dans la corbeille, qui
+compte dans les 15 Go : au checkpoint 3000, quatre checkpoints supprimés et
+deux gardés font déjà plus de 17 Go. Colab ne signale rien ; les fichiers
+restent seulement visibles depuis la session qui les a écrits.
+
+- 7 octobre : reprise au checkpoint 3000, auquel il manquait l'état de
+  l'optimiseur. Le Trainer est reparti sans prévenir avec un optimiseur et
+  un plan de taux d'apprentissage neufs (second préchauffage, fin au taux
+  maximal) : WER de validation 48,9 % à la fin. Ce modèle n'est pas non plus
+  arrivé sur Drive.
+- 10 octobre : la reprise ignore désormais les checkpoints incomplets. Elle
+  est partie du checkpoint 2500, complet, avec le bon plan de taux
+  d'apprentissage. WER de validation : 58,0 % à l'étape 3000, 47,3 % à
+  3500, 46,8 % à la fin (3781). Le modèle retenu est le meilleur selon la
+  validation (à confirmer : cellule « Quel modèle Whisper est sur Drive ? »).
+
+Corrigé dans le notebook : place libre vérifiée avant chaque entraînement,
+attente de la synchronisation de Drive (30 minutes au plus, au lieu de 24 h
+par défaut), corbeille à vider, et une évaluation est refaite quand son
+modèle a été réentraîné depuis.
 
 ### Premiers résultats sur le test, avant le fine-tuning de NLLB
+
+**Dépassés** : obtenus avec le modèle Whisper du 7 octobre (reprise
+défectueuse, voir ci-dessus), qui n'existe plus. Gardés pour mémoire ; à
+refaire avec le modèle du 10 octobre. Les lignes MMS + NLLB, sans Whisper,
+restent valables.
 
 Notebook §6, 7 octobre 2026, GPU T4 : Jeli-ASR, partition de test, les
 mêmes 300 énoncés qu'en phase 1 (même graine). NLLB n'est pas encore affiné :

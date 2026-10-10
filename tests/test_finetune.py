@@ -142,6 +142,26 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
     (tmp_path / "resultats" / "asr-e2e-1.json").write_text(json.dumps({"nom": "bout-en-bout affiné"}))
     assert ns["deja"]("bout-en-bout affiné") and not ns["deja"]("cascade affinée")
 
+    # Whisper réentraîné après une évaluation : le rapport est mis de côté et
+    # l'évaluation refaite ; plus récent que le modèle, il est gardé.
+    import os
+    poids = tmp_path / "whisper" / "model.safetensors"
+    poids.parent.mkdir()
+    poids.write_text("")
+    res = tmp_path / "resultats"
+    for name, date in (("asr-cascade-1", 1e9), ("asr-cascade-2", 3e9)):
+        (res / f"{name}.json").write_text(json.dumps({"nom": name, "modeles": {
+            "asr": str(poids.parent), "mt_in": "facebook/nllb-200-distilled-600M",
+            "plafond_longueur": 2.0}}))
+        (res / f"{name}.details.jsonl").write_text("")
+        os.utime(res / f"{name}.json", (date, date))
+    os.utime(poids, (2e9, 2e9))
+    assert not ns["deja"]("asr-cascade-1")
+    assert sorted(f.name for f in res.glob("asr-cascade-1*")) == [
+        "asr-cascade-1.details.jsonl.ancien", "asr-cascade-1.json.ancien"]
+    assert not ns["deja"]("asr-cascade-1") and ns["deja"]("asr-cascade-2")
+    assert "réentraîné depuis : refait" in capsys.readouterr().out
+
     # Le checkpoint se charge comme un modèle : l'évaluation peut s'en servir.
     from bambara_voice.asr import SpeechRecognizer
     from bambara_voice.config import ASRConfig
