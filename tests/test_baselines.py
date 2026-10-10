@@ -224,6 +224,7 @@ def test_cli_asr_nemo(tmp_path, fakes):
     asr = _report(out, "asr-cascade")
     assert asr["nom"] == "soloni-114m-tdt-ctc-v1 + nllb-200-distilled-600M"
     assert asr["modeles"]["kind"] == "nemo" and asr["modeles"]["nemo_decoder"] == "ctc"
+    assert asr["modeles"]["language"] is None  # sans objet hors de Whisper
 
 
 def test_cli_plafond_de_longueur(tmp_path, fakes):

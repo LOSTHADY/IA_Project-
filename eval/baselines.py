@@ -342,7 +342,9 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
                         "backend": args.backend,
                         **({"compute_type": args.compute_type}
                            if args.backend == "ctranslate2" else {}),
-                        "language": language, "target_lang": args.target_lang,
+                        # La langue imposée ne concerne que Whisper.
+                        "language": language if args.kind == "whisper" else None,
+                        "target_lang": args.target_lang,
                         **({"nemo_decoder": args.nemo_decoder or "défaut"}
                            if args.kind == "nemo" else {}),
                         **({"mt_in": args.mt_model, **_mt_models(args)}
