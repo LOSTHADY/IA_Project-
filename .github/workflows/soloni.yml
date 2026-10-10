@@ -7,8 +7,11 @@
 # MMS est rejoué dans la même exécution pour que la comparaison ne dépende
 # ni de la version du code (plafond de longueur de NLLB) ni des bibliothèques.
 #
-# Le job « fiches » affiche les fiches des modèles de RobotsMali : données
-# d'entraînement à vérifier (Jeli-ASR test ne doit pas y figurer).
+# Le job « fiches » affiche les fiches des modèles de RobotsMali. Soloni v0,
+# l'ancêtre de toutes les versions, a été affiné sur bam-asr-early, tiré à
+# 87 % de Jeli-ASR : la comparaison compte nos phrases de test qui y
+# figurent (eval.recouvrement). Un score de Soloni avantagé par ce
+# recouvrement ne se comparerait pas aux autres.
 name: Soloni dans la cascade
 
 on:
@@ -22,7 +25,7 @@ on:
         default: "300"
   push:
     branches: [claude/chat-ia-bambara-dho8oa]
-    paths: [.github/workflows/soloni.yml]
+    paths: [.github/workflows/soloni.yml, bambara_voice/asr.py, eval/recouvrement.py]
 
 permissions:
   contents: read
@@ -170,9 +173,27 @@ jobs:
           } | tee soloni.md
           cat soloni.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Nos phrases de test ont-elles servi à entraîner Soloni ?
+        continue-on-error: true
+        run: |
+          pip install datasets soundfile
+          {
+            echo "### Phrases de test retrouvées dans des données d'entraînement"
+            echo
+            echo "Soloni v0 (ancêtre de toutes les versions) : bam-asr-early."
+            echo
+            python -m eval.recouvrement results/asr-*.json --dataset RobotsMali/bam-asr-early --split train
+            echo
+            echo "Pour comparaison, la partition train de Jeli-ASR (celle de notre Whisper) :"
+            echo
+            python -m eval.recouvrement results/asr-*.json --dataset RobotsMali/jeli-asr --split train
+          } | tee recouvrement.md
+          cat recouvrement.md >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: soloni-resultats
           path: |
             soloni.md
+            recouvrement.md
             results/

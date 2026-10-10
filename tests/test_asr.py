@@ -191,8 +191,11 @@ class _Hypothesis:
 
 
 def _fake_nemo(monkeypatch, output):
-    """Un faux paquet nemo : NeMo est trop lourd pour les tests."""
+    """Un faux paquet nemo : NeMo est trop lourd pour les tests. Seule sa
+    dépendance omegaconf, légère, est requise."""
     import types
+
+    pytest.importorskip("omegaconf")
 
     import soundfile as sf
 
@@ -217,13 +220,11 @@ def _fake_nemo(monkeypatch, output):
         @staticmethod
         def from_pretrained(model_name, map_location=None, return_config=False,
                             override_config_path=None, strict=True):
-            if calls.get("ancien") and override_config_path is None:
-                if return_config:
-                    from omegaconf import OmegaConf
-                    return OmegaConf.create({"decoding": {
-                        "greedy": {"boosting_tree": {"key_phrase_items_list": [1]}},
-                        "beam": {"boosting_tree": {"key_phrase_items_list": [2]}}}})
-                raise ValueError("Missing key key_phrase_items_list")
+            if return_config:
+                from omegaconf import OmegaConf
+                tree = {} if calls.get("ancien") else {"key_phrase_items_list": None}
+                return OmegaConf.create({"decoding": {"greedy": {"boosting_tree": tree},
+                                                      "beam": {"boosting_tree": dict(tree)}}})
             if override_config_path:
                 calls["patched"] = (open(override_config_path).read(), strict)
             calls["loaded"] = (model_name, str(map_location))
@@ -244,6 +245,7 @@ def test_nemo_transcrit_depuis_un_fichier_temporaire(monkeypatch):
     assert calls["loaded"] == ("RobotsMali/soloni", "cpu") and calls["eval"]
     assert calls["audio"] == (16_000, 16_000, False)
     assert "decoder" not in calls  # décodeur par défaut (TDT)
+    assert "patched" not in calls  # configuration à jour : chargement normal
 
 
 def test_nemo_anciennes_sorties_et_decodeur_ctc(monkeypatch):
@@ -255,7 +257,6 @@ def test_nemo_anciennes_sorties_et_decodeur_ctc(monkeypatch):
 
 
 def test_nemo_charge_un_modele_enregistre_avec_un_ancien_nemo(monkeypatch):
-    pytest.importorskip("omegaconf")
     calls = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")])
     calls["ancien"] = True
     rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloni", kind="nemo"))

@@ -130,12 +130,7 @@ class SpeechRecognizer:
         if cfg.model_id.endswith(".nemo"):
             model = ASRModel.restore_from(cfg.model_id, map_location=device)
         else:
-            try:
-                model = ASRModel.from_pretrained(model_name=cfg.model_id, map_location=device)
-            except Exception as err:
-                if "key_phrase_items_list" not in str(err):
-                    raise
-                model = self._load_nemo_patched(ASRModel, device)
+            model = self._load_nemo_hub(ASRModel, device)
         if cfg.nemo_decoder == "ctc":
             model.change_decoding_strategy(decoder_type="ctc",
                                            decoding_cfg=model.cfg.aux_ctc.decoding)
@@ -151,27 +146,30 @@ class SpeechRecognizer:
         model.eval()
         self._model = model
 
-    def _load_nemo_patched(self, ASRModel, device):
-        """Modèle enregistré avec NeMo 2.5, chargé par une version plus
-        récente : le schéma de décodage exige `key_phrase_items_list`.
-        Contournement donné par la fiche de Soloni (NVIDIA-NeMo/Speech#15658)."""
+    def _load_nemo_hub(self, ASRModel, device):
+        """Depuis Hugging Face. Un modèle enregistré avec NeMo 2.5 (Soloni)
+        ne se charge plus tel quel avec une version récente : le schéma de
+        décodage exige `key_phrase_items_list`, absent de sa configuration.
+        On l'ajoute avant le chargement, comme le fait la fiche de Soloni
+        (NVIDIA-NeMo/Speech#15658). Constaté avec NeMo 3.0."""
         import tempfile
 
         from omegaconf import OmegaConf
 
-        logger.warning("%s : configuration NeMo ancienne, chargement avec correctif",
-                       self.config.model_id)
-        conf = ASRModel.from_pretrained(self.config.model_id, return_config=True)
+        model_id = self.config.model_id
+        conf = ASRModel.from_pretrained(model_id, return_config=True)
         OmegaConf.set_struct(conf, False)
-        for decoder in ("greedy", "beam"):
-            tree = OmegaConf.select(conf, f"decoding.{decoder}.boosting_tree")
-            if tree is not None:
-                tree.key_phrase_items_list = None
+        trees = [OmegaConf.select(conf, f"decoding.{d}.boosting_tree") for d in ("greedy", "beam")]
+        old = [t for t in trees if t is not None and "key_phrase_items_list" not in t]
+        if not old:
+            return ASRModel.from_pretrained(model_name=model_id, map_location=device)
+        logger.warning("%s : configuration d'un ancien NeMo, corrigée avant chargement", model_id)
+        for tree in old:
+            tree.key_phrase_items_list = None
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.yaml"
             OmegaConf.save(conf, path)
-            return ASRModel.from_pretrained(model_name=self.config.model_id,
-                                            override_config_path=str(path),
+            return ASRModel.from_pretrained(model_name=model_id, override_config_path=str(path),
                                             map_location=device, strict=False)
 
     def transcribe(self, audio: np.ndarray | str | Path) -> ASRResult:
