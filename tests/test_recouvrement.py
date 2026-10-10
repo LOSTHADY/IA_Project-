@@ -33,12 +33,17 @@ def test_phrases_de_test_retrouvees_dans_l_entrainement(tmp_path, capsys):
         "a tɛ taa sugu la bi",         # absente
         "a bɛ yen",                    # présente mais trop courte : ignorée
     ])
-    recouvrement.main([str(rapport), "--dataset", str(jeu), "--split", "train",
-                       "--min-mots", "4"])
+    vus = tmp_path / "vus.txt"
+    for _ in range(2):  # ajouté au fichier : plusieurs jeux d'entraînement à la suite
+        recouvrement.main([str(rapport), "--dataset", str(jeu), "--split", "train",
+                           "--min-mots", "4", "--ids-vus", str(vus)])
     out = capsys.readouterr().out
     assert "colonnes : bambara=bam" in out
     assert "**2 sur 3** références de test d'au moins 4 mots (66.7 %)" in out
     assert "(4 références en tout)" in out and "« N bɛ taa sugu la. »" in out
+    # Toutes longueurs : la phrase courte aussi, au plus prudent.
+    assert "Toutes longueurs confondues : 3 références." in out
+    assert vus.read_text().split() == ["0", "1", "3"] * 2
 
 
 def test_rapport_sans_reference(tmp_path):

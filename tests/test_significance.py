@@ -196,6 +196,18 @@ def test_cli_compare_cascade_et_bout_en_bout(tmp_path, capsys):
         significance.main([str(tmp_path / "c.json"), "--noms", "inconnu"])
 
 
+def test_cli_ecarte_les_enonces_deja_vus(tmp_path, capsys):
+    rapport = _report(tmp_path / "c.json", {"nom": "cascade", "architecture": "cascade",
+                                            "maillon": "asr"}, _asr_rows(e2e=False))
+    vus = tmp_path / "vus.txt"
+    vus.write_text("0\n1\n\n", encoding="utf-8")
+    significance.main([str(rapport), "--exclure", str(vus), "--n-boot", "10"])
+    out = capsys.readouterr().out
+    assert out.startswith("2 énoncés écartés")
+    assert f"| WER strict | {len(REFS) - 2} |" in out
+    assert load_series(rapport, {"0"})[1]["WER strict"].ids[0] == "1"
+
+
 def test_cli_jeu_maison_tire_les_locuteurs(tmp_path, capsys):
     rows = [{"item": f"bv-{i}", "source_bm": h, "source_fr": f, "ref_transcript_bm": r,
              "ref_translation_fr": fr, "speaker": f"spk-0{i % 3}"}

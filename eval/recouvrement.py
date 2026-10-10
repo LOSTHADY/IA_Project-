@@ -58,7 +58,9 @@ def overlap(refs: dict[str, str], texts: set[str], min_words: int) -> dict:
     long = {i: r for i, r in refs.items() if len(fold(r).split()) >= min_words}
     found = sorted(i for i, r in long.items() if fold(r) in texts)
     return {"references": len(refs), "longues": len(long), "retrouvees": len(found),
-            "exemples": [long[i] for i in found[:EXAMPLES]]}
+            "exemples": [long[i] for i in found[:EXAMPLES]],
+            # Toutes longueurs : pour exclure, au plus prudent, tout ce qui a pu être vu.
+            "ids_vus": sorted(i for i, r in refs.items() if fold(r) in texts)}
 
 
 def to_markdown(res: dict, dataset: str, split: str, min_words: int) -> str:
@@ -67,6 +69,7 @@ def to_markdown(res: dict, dataset: str, split: str, min_words: int) -> str:
              f"{min_words} mots ({share:.1f} %) figurent telles quelles dans {dataset} [{split}] "
              f"({res['references']} références en tout)."]
     lines += [f"- « {e} »" for e in res["exemples"]]
+    lines += ["", f"Toutes longueurs confondues : {len(res['ids_vus'])} références."]
     return "\n".join(lines) + "\n"
 
 
@@ -79,6 +82,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--split", default="train")
     p.add_argument("--bm-column", default=None)
     p.add_argument("--min-mots", type=int, default=5)
+    p.add_argument("--ids-vus", type=Path, default=None, metavar="FICHIER",
+                   help="ajoute à ce fichier les identifiants des énoncés de test retrouvés, "
+                        "toutes longueurs (pour eval.significance --exclure)")
     args = p.parse_args(argv)
 
     refs = references([r for r in args.rapports if r.suffix == ".json"])
@@ -87,6 +93,9 @@ def main(argv: list[str] | None = None) -> None:
     texts = train_texts(args.dataset, args.config, args.split, args.bm_column)
     res = overlap(refs, texts, args.min_mots)
     print(to_markdown(res, args.dataset, args.split, args.min_mots))
+    if args.ids_vus:
+        with args.ids_vus.open("a", encoding="utf-8") as f:
+            f.writelines(f"{i}\n" for i in res["ids_vus"])
 
 
 if __name__ == "__main__":

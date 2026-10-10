@@ -130,13 +130,17 @@ def _series(label, kind, rows, id_key, hyp_key, ref_key, folded=False) -> Series
                   speakers if all(speakers) else None, refs)
 
 
-def load_series(report_path: str | Path) -> tuple[str, dict[str, Series]]:
+def load_series(report_path: str | Path,
+                exclude: set[str] | None = None) -> tuple[str, dict[str, Series]]:
     """Séries disponibles dans un rapport de eval.baselines ou eval.run_eval,
-    sous les mêmes libellés que dans eval.compare."""
+    sous les mêmes libellés que dans eval.compare. `exclude` : identifiants
+    d'énoncés à écarter (eval.recouvrement --ids-vus)."""
     report_path = Path(report_path)
     report = json.loads(report_path.read_text(encoding="utf-8"))
     name = report.get("nom") or report.get("architecture", report_path.stem)
     rows = _details(report_path)
+    if exclude:
+        rows = [r for r in rows if str(r.get("id", r.get("item"))) not in exclude]
     arch, maillon = report.get("architecture"), report.get("maillon")
 
     if maillon == "mt":
@@ -308,9 +312,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--unite", choices=UNITS, default="auto",
                    help="unité tirée avec remise : énoncés ou locuteurs (auto : locuteurs "
                         "si toutes les sorties en portent un)")
+    p.add_argument("--exclure", type=Path, default=None, metavar="FICHIER",
+                   help="identifiants d'énoncés à écarter, un par ligne (ex. ceux déjà vus "
+                        "à l'entraînement, cf. eval.recouvrement --ids-vus)")
     args = p.parse_args(argv)
 
-    loaded = [load_series(path) for path in args.reports
+    exclude = None
+    if args.exclure:
+        exclude = {line.strip() for line in args.exclure.read_text(encoding="utf-8").splitlines()
+                   if line.strip()}
+        print(f"{len(exclude)} énoncés écartés ({args.exclure}).\n")
+    loaded = [load_series(path, exclude) for path in args.reports
               if not path.name.endswith(".details.jsonl")]
     if args.noms:
         by_name = {name: series for name, series in loaded}
