@@ -18,6 +18,7 @@ from bambara_voice.nombres import bambara, en_bambara, en_chiffres  # noqa: E402
     (45, "binaani ni duuru"), (99, "bikɔnɔntɔn ni kɔnɔntɔn"), (100, "kɛmɛ"),
     (125, "kɛmɛ ni mugan ni duuru"), (200, "kɛmɛ fila"), (1000, "waa kelen"),
     (2026, "waa fila ni mugan ni wɔɔrɔ"), (1_000_000, "miliyɔn kelen"),
+    (0, "fu"),  # corrigé par un locuteur natif (au lieu de « sifiri »)
 ])
 def test_numeration_bambara(n, attendu):
     assert bambara(n) == attendu

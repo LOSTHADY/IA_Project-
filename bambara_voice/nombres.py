@@ -25,7 +25,7 @@ import re
 
 UNITES = ("", "kelen", "fila", "saba", "naani", "duuru", "wɔɔrɔ", "wolonwula",
           "seegin", "kɔnɔntɔn")
-ZERO = "sifiri"
+ZERO = "fu"  # « fu » : rien, zéro
 
 
 def _dizaines(n: int) -> str:

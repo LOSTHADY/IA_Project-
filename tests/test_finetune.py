@@ -250,6 +250,20 @@ def test_reprise_sans_checkpoint_complet(tmp_path):
     assert last_complete_checkpoint(tmp_path) == str(ck)
 
 
+def test_nllb_avec_jeli_asr_en_plus(work, tmp_path):
+    """NLLB v2 : Bayelemabaga plus les paires transcription-traduction d'un
+    jeu façon Jeli-ASR (audio ignoré), doublons retirés, validation mêlée."""
+    out = tmp_path / "nllb-v2"
+    log = _train("finetune_nllb.py", "--dataset", str(work["text"]),
+                 "--extra-dataset", str(work["speech"]), "--model", str(work["nllb"]),
+                 "--direction", "bm2fr", "--save-steps", "2", "--eval-samples", "4",
+                 "--output", str(out))
+    assert f"+ {work['speech']} : " in log and "bambara=bam, français=french" in log
+    # 16 + 14 paires, mais seulement 4 phrases différentes dans ces jeux factices.
+    assert "Entraînement : 4 paires (26 doublons retirés) ; validation : 4" in log
+    assert (out / "model.safetensors").exists()
+
+
 def test_nllb_impose_la_langue_cible(nllb_ft):
     from transformers import AutoTokenizer
 
