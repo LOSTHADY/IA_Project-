@@ -99,6 +99,27 @@ def test_le_notebook_n_a_pas_d_apostrophe_dans_les_commandes():
     assert shell and not [line for line in shell if "'" in line]
 
 
+def test_le_notebook_se_compile():
+    """« Tout exécuter » s'arrête à la première erreur : chaque cellule doit
+    au moins être du Python valide, commandes shell et magies mises à part."""
+    nb = json.loads((ROOT / "notebooks" / "phase3_finetuning.ipynb").read_text(encoding="utf-8"))
+    for k, c in enumerate(nb["cells"]):
+        if c["cell_type"] != "code":
+            continue
+        lines, shell = [], False
+        for line in "".join(c["source"]).splitlines():
+            stripped = line.lstrip()
+            if shell:  # suite d'une commande shell coupée par « \ »
+                shell = line.rstrip().endswith("\\")
+                continue
+            if stripped.startswith(("!", "%")):
+                lines.append(line[:len(line) - len(stripped)] + "pass")
+                shell = line.rstrip().endswith("\\")
+            else:
+                lines.append(line)
+        compile("\n".join(lines), f"cellule {k}", "exec")
+
+
 def test_le_notebook_estime_la_duree_d_apres_l_essai(whisper_ft, capsys):
     """La cellule « durée prévue » du notebook Colab lit trainer_state.json,
     que le script écrit en fin d'entraînement."""
@@ -161,6 +182,21 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
         "asr-cascade-1.details.jsonl.ancien", "asr-cascade-1.json.ancien"]
     assert not ns["deja"]("asr-cascade-1") and ns["deja"]("asr-cascade-2")
     assert "réentraîné depuis : refait" in capsys.readouterr().out
+
+    # Rapport tronqué (copie vers Drive interrompue) : écarté, sans erreur.
+    (res / "asr-coupe.json").write_text('{"nom": "cou')
+    assert not ns["deja"]("cou") and (res / "asr-coupe.json.tronque").exists()
+
+    # Étape à refaire tant que sa sortie est plus ancienne que les poids en
+    # service (ici le checkpoint de Whisper sur Drive).
+    sortie = tmp_path / "chaine" / "cascade-1.json"
+    sortie.parent.mkdir()
+    assert not ns["a_jour"](str(tmp_path / "chaine" / "*.json"))  # rien encore
+    sortie.write_text("{}")
+    os.utime(sortie, (1e9, 1e9))
+    assert not ns["a_jour"](str(sortie))
+    os.utime(sortie, (4e9, 4e9))
+    assert ns["a_jour"](str(sortie))
 
     # Le checkpoint se charge comme un modèle : l'évaluation peut s'en servir.
     from bambara_voice.asr import SpeechRecognizer
