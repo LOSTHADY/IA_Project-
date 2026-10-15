@@ -65,6 +65,11 @@ def simplify_for_translation(text: str, max_words: int | None = None,
     return " ".join(kept)
 
 
+def split_sentences(text: str) -> list[str]:
+    """Phrases d'un texte, sur la ponctuation finale (. ! ?)."""
+    return [p for p in _SENTENCE_RE.split(re.sub(r"\s+", " ", text).strip()) if p]
+
+
 def split_for_translation(text: str, max_words: int = 10, min_words: int = 4) -> list[str]:
     """Découpe un texte français en segments courts, sans rien en retirer.
 
@@ -154,7 +159,8 @@ class ChatModel:
         else:
             raw = self._reply_transformers(user_text_fr, history)
 
-        return simplify_for_translation(raw, max_words=cfg.max_words)
+        return simplify_for_translation(raw, max_words=cfg.max_words,
+                                        max_sentences=cfg.max_sentences)
 
     def _messages(self, user_text_fr: str, history: list[dict] | None) -> list[dict]:
         msgs = [{"role": "system", "content": self.config.system_prompt}]

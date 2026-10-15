@@ -74,6 +74,11 @@ class MTConfig:
     # de longueur). None : seul max_new_tokens borne la sortie (phase 1).
     max_length_ratio: float | None = 2.0
     max_length_margin: int = 10
+    # Sortie en boucle (« a y'a ɲininka ko a y'a ɲininka ko… ») : retraduire
+    # en interdisant de répéter un trigramme. Activé dans l'assistant
+    # (PipelineConfig), pas par défaut en évaluation, pour garder les
+    # mesures comparables à celles d'avant (eval.baselines --relance-boucles).
+    retry_loops: bool = False
 
 
 @dataclass
@@ -91,8 +96,12 @@ class LLMConfig:
     # (HF_TOKEN) : sans cela, son téléchargement échoue (401).
     model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
     gguf_path: str | None = None  # requis si backend == "llamacpp"
-    max_new_tokens: int = 96
+    max_new_tokens: int = 192
     temperature: float = 0.3
+    # Longueur des réponses, en phrases : chacune est traduite à part
+    # (PipelineConfig.translate_by_sentence), la longueur coûte surtout du
+    # temps (traduction et synthèse croissent avec elle).
+    max_sentences: int = 5
     # Couper les phrases plus longues ; None : jamais. La coupure perd la fin
     # de la phrase sans gain mesuré sur la traduction (docs/RESULTATS.md).
     max_words: int | None = None
@@ -104,7 +113,8 @@ class LLMConfig:
         "- Phrases courtes, 15 mots maximum, une idée par phrase.\n"
         "- Pas de subordonnées, pas de tournures idiomatiques, pas de jargon.\n"
         "- Vocabulaire concret et courant.\n"
-        "- 3 phrases maximum au total.\n"
+        "- Entre 2 et 5 phrases : développe quand la question le demande.\n"
+        "- Écris les nombres en chiffres.\n"
         "- Pas de listes, pas de mise en forme, pas d'emoji."
     )
 
@@ -138,12 +148,19 @@ class PipelineConfig:
     name: str = "cascade"
     architecture: Literal["cascade", "e2e"] = "cascade"
     asr: ASRConfig = field(default_factory=ASRConfig)
-    mt_in: MTConfig = field(default_factory=lambda: MTConfig(src_lang=BAM, tgt_lang=FRA))
-    mt_out: MTConfig = field(default_factory=lambda: MTConfig(src_lang=FRA, tgt_lang=BAM))
+    mt_in: MTConfig = field(default_factory=lambda: MTConfig(src_lang=BAM, tgt_lang=FRA,
+                                                             retry_loops=True))
+    mt_out: MTConfig = field(default_factory=lambda: MTConfig(src_lang=FRA, tgt_lang=BAM,
+                                                              retry_loops=True))
     llm: LLMConfig = field(default_factory=LLMConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
     templates: TemplateConfig = field(default_factory=TemplateConfig)
     device: str = os.environ.get("BV_DEVICE", "cpu")
+    # Nombres de la réponse écrits par règle, pas par NLLB (bambara_voice.nombres).
+    spell_numbers: bool = True
+    # Réponse traduite phrase par phrase : NLLB est entraîné sur des phrases
+    # isolées et omet ou déforme volontiers dans un paragraphe.
+    translate_by_sentence: bool = True
 
     def __post_init__(self) -> None:
         if self.architecture == "e2e":

@@ -270,6 +270,9 @@ def _mt_args(sp) -> None:
                     help=f"traduction limitée à RATIO × la source + marge, en jetons "
                          f"(défaut : {MTConfig().max_length_ratio:g} ; 0 : pas de plafond, "
                          f"comme en phase 1)")
+    sp.add_argument("--relance-boucles", action="store_true",
+                    help="retraduire, sans répéter de trigramme, une sortie qui boucle "
+                         "(réglage de l'assistant ; pas par défaut en évaluation)")
 
 
 def _ratio(args) -> float | None:
@@ -281,18 +284,18 @@ def _ratio(args) -> float | None:
 
 def _mt_engine(args) -> dict:
     return {"backend": args.backend, "compute_type": args.compute_type,
-            "max_length_ratio": _ratio(args)}
+            "max_length_ratio": _ratio(args), "retry_loops": args.relance_boucles}
 
 
 def _mt_suffix(args) -> str:
     """Le nom ne signale que l'écart au réglage par défaut."""
-    if args.plafond is None:
-        return ""
-    return f" [plafond ×{args.plafond:g}]" if args.plafond else " [sans plafond]"
+    suffix = "" if args.plafond is None else (
+        f" [plafond ×{args.plafond:g}]" if args.plafond else " [sans plafond]")
+    return suffix + (" [relance des boucles]" if args.relance_boucles else "")
 
 
 def _mt_models(args) -> dict:
-    return {"plafond_longueur": _ratio(args)}
+    return {"plafond_longueur": _ratio(args), "relance_boucles": args.relance_boucles}
 
 
 # --- ligne de commande --------------------------------------------------------

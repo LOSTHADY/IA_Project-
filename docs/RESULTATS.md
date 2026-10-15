@@ -501,3 +501,87 @@ vues ») :
 
 L'avance de Soloni ne vient pas des phrases déjà vues : elle est même un
 peu plus nette sans elles.
+
+### Résultats complets : cascade contre bout-en-bout (15 octobre)
+
+Notebook « Tout exécuter », GPU T4. Whisper : le modèle du 10 octobre,
+checkpoint 3781 (WER de validation 46,8 %). NLLB : une époque par sens sur
+Bayelemabaga, Adafactor (bm→fr, puis fr→bm en 1 h 30, chrF++ de validation
+34,3). Mêmes 300 énoncés de test de Jeli-ASR qu'en phase 1.
+
+**Reconnaissance (WER strict).**
+
+| MMS | Whisper affiné | Soloni |
+|---|---|---|
+| 58,2 % [54,6 ; 62,0] | 50,3 % [41,4 ; 64,7] | **45,5 %** [42,3 ; 48,8] |
+
+L'intervalle de Whisper est très large : quelques hallucinations très
+longues pèsent lourd. Ni l'écart Whisper–MMS (−7,9 [−15,7 ; 4,7]) ni l'écart
+Soloni–Whisper (−4,8 [−18,6 ; 3,6]) ne sont établis ; seul Soloni–MMS l'est.
+
+**Traduction seule (chrF++, 500 phrases de Bayelemabaga).**
+
+| | NLLB d'origine | NLLB affiné | Écart (IC à 95 %) |
+|---|---|---|---|
+| bambara → français | 21,8 | **27,8** | +6,0 [5,0 ; 7,0] |
+| français → bambara | 25,7 | **29,9** | +4,2 [3,2 ; 5,3] |
+
+Sur les phrases de Jeli-ASR (oral), le gain est moindre : 22,6 → 26,1 vers
+le français, 29,8 → 30,7 vers le bambara.
+
+**Comparaison centrale : le français obtenu depuis l'audio (chrF++, 293
+énoncés).**
+
+| Système | chrF++ | Écart avec le bout-en-bout (IC à 95 %) | Latence (T4) |
+|---|---|---|---|
+| Bout-en-bout : Whisper affiné | 20,9 | — | 0,50 s |
+| Cascade : Whisper affiné + NLLB affiné | 22,4 | +1,4 [−0,7 ; 3,5], n.s. | 1,47 s |
+| Cascade : Soloni + NLLB affiné | **23,7** | **+2,7 [0,9 ; 4,7], p = 0,004** | 0,69 s |
+
+- **Avec NLLB affiné, la cascade l'emporte**, nettement avec Soloni :
+  +2,7 points de chrF++ sur le bout-en-bout, écart établi. Avec Whisper
+  pour reconnaître, l'écart (+1,4) n'est pas établi.
+- **Le fine-tuning de NLLB fait l'essentiel** : la même cascade Whisper
+  passe de 18,9 à 22,4 (+3,5) ; contre la référence MMS + NLLB d'origine,
+  +4,3 [2,9 ; 5,7].
+- **Ce que la reconnaissance coûte à la traduction** : 3,2 points avec
+  Soloni, 4,5 avec Whisper (chrF++ depuis le texte de référence : 26,9).
+- **Le bout-en-bout reste le plus rapide**, mais la cascade avec Soloni
+  n'est plus lente que de 0,2 s.
+
+**Chaîne complète, 20 énoncés (GPU).** Cascade 5,8 s par tour (dont
+reconnaissance 1,5, LLM 1,5, traductions 1,4 et 1,1, synthèse 0,3), bout-
+en-bout 4,1 s. Les erreurs de compréhension du bout-en-bout se propagent
+sans recours (« miniyanba ni den tɛ mɔgɔ min fɛ » → « grand python c'est
+notre enfant… ») ; dans la cascade, une traduction sortante est partie en
+boucle (« A y'a nyininka ko a y'a nyininka ko… »).
+
+### Test au micro (15 octobre, locuteur natif)
+
+Démo Gradio, cascade, quelques dizaines d'échanges. Appréciation de
+l'auteur, locuteur natif :
+
+- **Reconnaissance** : très bonne sur les phrases simples. Limites : le
+  mélange bambara–français (voire anglais), courant à l'oral, et les termes
+  familiers, surtout chez les jeunes (« wai » pour saluer, « yoh »), absents
+  des corpus.
+- **Bambara → français** : le maillon le plus faible ; il lui arrive de
+  déformer entièrement la phrase, et toute la suite de la chaîne en pâtit.
+- **LLM** : rien à signaler.
+- **Français → bambara** : mêmes défauts, moins graves. Les nombres en
+  particulier : « compte jusqu'à vingt » donnait « … kɔnɔntɔn, tan, tan,
+  tan, tan ni fila … », sans 11 ni 19.
+- **Synthèse** : accent correct, quelques mots difficiles à comprendre.
+- **Souhait** : des réponses un peu plus longues.
+
+Corrigé dans la foulée, côté assistant (`PipelineConfig`) :
+
+- **nombres écrits par règle** (`bambara_voice.nombres`) : les nombres
+  français en lettres passent en chiffres, que NLLB recopie, puis les
+  chiffres deviennent des nombres bambara (21 → « mugan ni kelen »), que la
+  synthèse sait lire ;
+- **traduction refaite quand elle boucle**, en interdisant de répéter un
+  trigramme (`MTConfig.retry_loops`, aussi `eval.baselines --relance-boucles`
+  pour en mesurer l'effet) ;
+- **réponses plus longues** : jusqu'à 5 phrases au lieu de 3, chacune
+  traduite à part (NLLB est entraîné sur des phrases isolées).

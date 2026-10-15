@@ -197,6 +197,13 @@ def test_le_notebook_evalue_le_dernier_checkpoint(whisper_ft, tmp_path, capsys):
     assert not ns["a_jour"](str(sortie))
     os.utime(sortie, (4e9, 4e9))
     assert ns["a_jour"](str(sortie))
+    # Avec code=True, le dernier commit de bambara_voice compte aussi : le
+    # dépôt courant en a un, postérieur à 1e9 et antérieur à 4e9.
+    assert ns["a_jour"](str(sortie), code=True)
+    os.utime(sortie, (1.5e9, 1.5e9))
+    os.utime(next((tmp_path / "drive" / "whisper-small-bm").glob("*/model.safetensors")),
+             (1e9, 1e9))
+    assert ns["a_jour"](str(sortie)) and not ns["a_jour"](str(sortie), code=True)
 
     # Le checkpoint se charge comme un modèle : l'évaluation peut s'en servir.
     from bambara_voice.asr import SpeechRecognizer

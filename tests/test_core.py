@@ -160,3 +160,15 @@ def test_chargement_du_jeu_de_test_exemple():
     stats = describe(items)
     assert stats["locuteurs"] == 3
     assert 0 < stats["part_code_switching"] < 1
+
+
+def test_longueur_des_reponses_reglable():
+    from bambara_voice.config import LLMConfig
+    from bambara_voice.llm import ChatModel, split_sentences
+
+    assert split_sentences("Une. Deux ! Trois ?  Quatre") == ["Une.", "Deux !", "Trois ?", "Quatre"]
+    phrases = " ".join(f"Phrase {i}." for i in range(8))
+    llm = ChatModel(LLMConfig(backend="echo", max_sentences=5))
+    assert len(split_sentences(llm.reply(phrases))) == 5
+    assert LLMConfig().max_sentences == 5 and "chiffres" in LLMConfig().system_prompt
+

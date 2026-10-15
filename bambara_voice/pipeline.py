@@ -26,8 +26,9 @@ import numpy as np
 
 from .asr import SpeechRecognizer, load_audio
 from .config import PipelineConfig
-from .llm import ChatModel
+from .llm import ChatModel, split_sentences
 from .mt import Translator
+from .nombres import en_bambara, en_chiffres
 from .templates import TemplateBank
 from .tts import SpeechSynthesizer, SpeechResult
 
@@ -132,9 +133,18 @@ class VoicePipeline:
         with _Timer(trace.timings, "llm"):
             trace.reply_fr = self.llm.reply(trace.source_fr, history)
         with _Timer(trace.timings, "mt_out"):
-            trace.reply_bm = self.mt_out.translate(trace.reply_fr)
+            trace.reply_bm = self._translate_reply(trace.reply_fr)
         trace.reply_source = "mt"
         return trace.reply_bm
+
+    def _translate_reply(self, text_fr: str) -> str:
+        """Français -> bambara : nombres par règle, une phrase à la fois."""
+        cfg = self.config
+        if cfg.spell_numbers:
+            text_fr = en_chiffres(text_fr)  # NLLB recopie les chiffres
+        pieces = split_sentences(text_fr) if cfg.translate_by_sentence else [text_fr]
+        text_bm = " ".join(t for t in (self.mt_out.translate(p) for p in pieces) if t)
+        return en_bambara(text_bm) if cfg.spell_numbers else text_bm
 
     def speak(self, trace: TurnTrace) -> SpeechResult:
         with _Timer(trace.timings, "tts"):
