@@ -302,3 +302,16 @@ def test_chaine_complete_sur_cpu(cpu):
 
     assert {"asr", "mt_depuis_asr"} <= set(analyse_report(c_path)[1])
     assert "e2e" in analyse_report(e_path)[1]
+
+    # Jeu « dit » de l'atelier : français de référence, pas de transcription.
+    # On s'arrête au français compris : ni LLM, ni WER, ni propagation.
+    dit = cpu / "echantillon" / "testset-dit.jsonl"
+    lignes = [json.loads(line) for line in testset.read_text(encoding="utf-8").splitlines()]
+    dit.write_text("\n".join(json.dumps({**r, "transcript_bm": ""}) for r in lignes),
+                   encoding="utf-8")
+    compris = evaluate(dit, "cascade", cpu / "dit", config_path=config, understand_only=True)
+    assert set(compris["latence"]["par_etape_s"]) == {"asr", "mt_in"}
+    assert compris["comprehension_seule"] and "mt_in_depuis_asr" in compris
+    assert not {"asr", "propagation_erreurs", "gabarits"} & set(compris)
+    [d_path] = (cpu / "dit").glob("cascade-*[0-9].json")
+    assert set(load_series(d_path)[1]) == {"chrF++ (depuis ASR)"}

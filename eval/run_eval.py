@@ -12,6 +12,10 @@ Utilisation :
     python -m eval.run_eval --testset data/testset/testset.jsonl --arch cascade
     python -m eval.run_eval --testset data/testset/testset.jsonl --arch e2e
     python -m eval.run_eval --testset ... --arch cascade --config modeles-cpu/config.json
+
+`--comprendre-seulement` s'arrête au français compris, sans réponse ni
+synthèse : c'est tout ce que mesure un jeu de test sans transcription (les
+énoncés « dits » de l'atelier), et le LLM coûterait l'essentiel du temps.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from pathlib import Path
 
 from bambara_voice.config import build_config
 from bambara_voice.mt import Translator
-from bambara_voice.pipeline import VoicePipeline
+from bambara_voice.pipeline import TurnTrace, VoicePipeline
 
 from .dataset import load_testset, describe
 from .metrics import score_asr, score_mt, cascade_degradation
@@ -43,6 +47,7 @@ def evaluate(
     limit: int | None = None,
     synthesize: bool = False,
     config_path: Path | None = None,
+    understand_only: bool = False,
 ) -> dict:
     items = load_testset(testset_path)
     if limit:
@@ -58,7 +63,11 @@ def evaluate(
         if not audio.exists():
             logger.warning("[%d/%d] audio absent, ignoré : %s", idx, len(items), audio)
             continue
-        trace, _ = pipeline.run(audio, synthesize=synthesize)
+        if understand_only:
+            trace = TurnTrace(architecture=config.architecture)
+            pipeline.understand(audio, trace)
+        else:
+            trace, _ = pipeline.run(audio, synthesize=synthesize)
         traces.append(trace)
         rows.append({"item": item.id, **trace.to_dict(),
                      "ref_transcript_bm": item.transcript_bm,
@@ -80,6 +89,7 @@ def evaluate(
         "testset": str(testset_path),
         "composition": describe(evaluated),
         "configuration": str(config_path) if config_path else "défaut",
+        "comprehension_seule": understand_only,
         "appareil": config.device,
         "modeles": {
             "asr": f"{config.asr.backend}:{config.asr.model_id}",
@@ -90,8 +100,10 @@ def evaluate(
         },
     }
 
-    # --- ASR : seulement si la variante produit du texte bambara ------------
-    if architecture == "cascade":
+    # --- ASR : seulement si la variante produit du texte bambara, et si le
+    # jeu de test le transcrit (pas les énoncés « dits » de l'atelier) -------
+    transcribed = all(i.transcript_bm for i in evaluated)
+    if architecture == "cascade" and transcribed:
         hyps = [t.source_bm for t in traces]
         refs = [i.transcript_bm for i in evaluated]
         report["asr"] = score_asr(hyps, refs).to_dict()
@@ -103,7 +115,7 @@ def evaluate(
         from_asr = score_mt(hyps_fr, refs_fr)
         report["mt_in_depuis_asr"] = from_asr.to_dict()
 
-        if architecture == "cascade":
+        if architecture == "cascade" and transcribed:
             # Même traduction, mais depuis la transcription de référence :
             # isole le coût de l'ASR dans la chaîne.
             gold_translator = Translator(config.mt_in, config.device)
@@ -125,12 +137,13 @@ def evaluate(
         "total_moyen_s": round(_mean([t.total_seconds for t in traces]), 3),
         "rtf_moyen": round(_mean([t.rtf for t in traces]), 3),
     }
-    n_tpl = sum(t.reply_source == "template" for t in traces)
-    report["gabarits"] = {
-        "couverture": round(n_tpl / len(traces), 3),
-        "repli_mt": round(1 - n_tpl / len(traces), 3),
-        "banque": len(pipeline.templates),
-    }
+    if not understand_only:
+        n_tpl = sum(t.reply_source == "template" for t in traces)
+        report["gabarits"] = {
+            "couverture": round(n_tpl / len(traces), 3),
+            "repli_mt": round(1 - n_tpl / len(traces), 3),
+            "banque": len(pipeline.templates),
+        }
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -154,11 +167,13 @@ def main() -> None:
                         help="fichier de déploiement JSON (cf. scripts/export_cpu.py)")
     parser.add_argument("--synthesize", action="store_true",
                         help="inclure la TTS dans le chronométrage (plus lent)")
+    parser.add_argument("--comprendre-seulement", action="store_true",
+                        help="audio -> français seulement, sans réponse ni synthèse")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     report = evaluate(args.testset, args.arch, args.out, args.limit, args.synthesize,
-                      args.config)
+                      args.config, args.comprendre_seulement)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

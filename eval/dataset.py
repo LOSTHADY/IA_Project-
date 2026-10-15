@@ -49,9 +49,14 @@ def load_testset(path: str | Path) -> list[TestItem]:
             raw = json.loads(line)
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}:{lineno} — JSON invalide : {exc}") from exc
-        for required in ("id", "audio", "transcript_bm"):
+        for required in ("id", "audio"):
             if not raw.get(required):
                 raise ValueError(f"{path}:{lineno} — champ obligatoire manquant : {required}")
+        # Une référence au moins : la transcription bambara, ou seulement la
+        # traduction française (énoncés « dits » de l'atelier, eval.atelier).
+        if not raw.get("transcript_bm") and not raw.get("translation_fr"):
+            raise ValueError(f"{path}:{lineno} — ni transcript_bm ni translation_fr")
+        raw.setdefault("transcript_bm", "")
         extra = {k: v for k, v in raw.items() if k not in _KNOWN}
         known = {k: v for k, v in raw.items() if k in _KNOWN}
         items.append(TestItem(**known, extra=extra))

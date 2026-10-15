@@ -88,6 +88,19 @@ L'application suit une séance dans l'ordre :
 
 Protocole et formulaire de consentement : [`docs/COLLECTE.md`](docs/COLLECTE.md).
 
+### Atelier de données : sans écrire le bambara
+
+```bash
+python app/atelier_app.py --share          # ou notebooks/atelier_collecte.ipynb sur Colab
+```
+
+Pour les contributeurs qui parlent le bambara sans l'écrire : **dire** en
+bambara 300 phrases françaises (12 rubriques), **lire** des phrases bambara
+écrites, **juger** à l'aveugle deux traductions, noter l'**argot**. Le jeu
+« dit » se passe de transcription : il mesure la compréhension depuis
+l'audio, la comparaison centrale, sur de la parole réelle. Mode d'emploi :
+[`docs/ATELIER.md`](docs/ATELIER.md).
+
 ## Références zero-shot (phase 1)
 
 [![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase1_zero_shot.ipynb)
@@ -212,10 +225,11 @@ bambara_voice/     pipeline d'inférence
   pipeline.py      orchestration + trace chronométrée de chaque tour
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
-app/               démo Gradio, application de collecte
-notebooks/         notebooks Colab (phases 1 et 3-4)
+app/               démo Gradio, application de collecte, atelier de données
+notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
+docs/ATELIER.md    atelier de données : dire, lire, juger, lexique
 docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
 docs/RESULTATS.md  chiffres mesurés, phase par phase
 data/templates.json  banque de gabarits (à remplir)
@@ -228,9 +242,9 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
 | 1 | Références zero-shot | **fait** — [`docs/RESULTATS.md`](docs/RESULTATS.md) |
-| 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
-| 3 | Fine-tuning Whisper + NLLB | **Whisper affiné** (une époque, 2 h 52 sur T4, WER de validation 44 %) ; NLLB à faire |
-| 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
+| 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, dont l'[atelier de données](docs/ATELIER.md) ; collecte à faire — chemin critique |
+| 3 | Fine-tuning Whisper + NLLB | **fait** : NLLB affiné, chrF++ 21,8 → 27,8 (bm→fr) et 25,7 → 29,9 (fr→bm) ; second tour (NLLB v2) prêt |
+| 4 | Comparaison des deux architectures | **faite sur Jeli-ASR** : cascade Soloni + NLLB affiné 23,7 contre bout-en-bout 20,9 (+2,7 [0,9 ; 4,7]) ; sur le jeu maison après la phase 2 |
 | 5 | Assemblage CPU, quantisation, démo | chaîne complète validée avec les vrais modèles (zero-shot, 33 s par tour en fp32) ; int8 à mesurer sur la machine cible |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est

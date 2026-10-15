@@ -1,0 +1,555 @@
+"""Atelier de données : enregistrer et juger sans rien transcrire.
+
+Quatre gestes, tous à la portée d'un locuteur qui parle le bambara sans
+l'écrire (docs/ATELIER.md) :
+
+- **dire** : une phrase française s'affiche, on la dit en bambara, avec ses
+  mots → audio bambara + traduction française de référence. C'est un jeu de
+  test de la chaîne (chrF++ depuis l'audio, `eval.run_eval`) sur la vraie
+  façon de parler, et des données pour le bout-en-bout ;
+- **lire** : une phrase bambara s'affiche, on la lit → audio + texte exact.
+  Données de synthèse vocale (une voix) et de reconnaissance ;
+- **juger** : deux traductions d'une même phrase, à l'aveugle → préférence.
+  Évaluation humaine (v1 contre v2, par exemple) ;
+- **lexique** : argot et mots d'emprunt, avec leur sens.
+
+Toute la logique vit ici pour être testée sans interface ; l'application
+(`app/atelier_app.py`) n'est qu'une façade. Le dossier de l'atelier n'est
+jamais versionné (la voix est une donnée personnelle, le dépôt est public) :
+
+- `locuteurs.jsonl` : contributeurs pseudonymisés, avec leur consentement ;
+- `dire.jsonl`, `lire.jsonl` : une prise de son par ligne ; `audio/*.wav` ;
+- `passes.jsonl` : phrases passées (illisibles, gênantes…) ;
+- `lecture.jsonl` : phrases bambara à lire (`preparer_lecture`) ;
+- `lots/*.jsonl` : paires à juger (`preparer_lot`) ; `jugements.jsonl` ;
+- `lexique.jsonl`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import random
+import re
+import threading
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+
+from bambara_voice.normalize import normalize
+
+from .collection import (SAMPLE_RATE, Speaker, _from_dict, _next_id, _read_jsonl,
+                         _write_jsonl, check_audio, to_mono_16k)
+
+ROOT = Path(__file__).resolve().parent.parent
+PHRASES_A_DIRE = ROOT / "data" / "atelier" / "a_dire.json"
+
+MODES = ("dire", "lire")
+CHOIX = {"A": "A meilleure", "B": "B meilleure",
+         "egal_bon": "les deux bonnes", "egal_mauvais": "les deux mauvaises"}
+TYPES_LEXIQUE = ("argot", "mot français", "mot anglais", "expression", "autre")
+LECTURE_CIBLE_MIN = 60   # une voix de synthèse correcte demande au moins une heure
+
+# Phrases bibliques ou coraniques, fréquentes dans Bayelemabaga : peu utiles
+# pour une voix d'assistant, et pénibles à lire à la chaîne.
+_RELIGIEUX = re.compile(r"\b(yesu|krista|krisita|matigi|kira|musa|isirayɛli|isirayeli|"
+                        r"sali|alakɔrɔ|alakɔrɔlen|sitanɛ|sɛtanɛ|eleyisa|filisitiw?)\b",
+                        re.IGNORECASE)
+
+
+# --- phrases ------------------------------------------------------------------
+
+def charger_phrases_a_dire(path: str | Path = PHRASES_A_DIRE) -> list[dict]:
+    """Phrases françaises à dire, dans l'ordre : {id, rubrique, titre, fr}."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    phrases = []
+    for rub in data["rubriques"]:
+        for k, fr in enumerate(rub["phrases"], 1):
+            if not fr.strip():
+                raise ValueError(f"{path} : phrase vide dans « {rub['titre']} »")
+            phrases.append({"id": f"{rub['id']}-{k:02d}", "rubrique": rub["id"],
+                            "titre": rub["titre"], "fr": fr.strip()})
+    ids = [p["id"] for p in phrases]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{path} : identifiants de rubrique en double")
+    return phrases
+
+
+def rubriques(phrases: list[dict]) -> list[tuple[str, str]]:
+    """(id, titre) des rubriques, dans l'ordre du fichier."""
+    vues: dict[str, str] = {}
+    for p in phrases:
+        vues.setdefault(p["rubrique"], p["titre"])
+    return list(vues.items())
+
+
+def preparer_lecture(out_path: str | Path, dataset: str = "RobotsMaliAI/bayelemabaga",
+                     n: int = 400, seed: int = 0, min_mots: int = 4,
+                     max_mots: int = 14) -> int:
+    """Choisit des phrases bambara à lire dans un corpus public : de longueur
+    moyenne, sans chiffres (dits de façons diverses), sans textes religieux,
+    sans doublons. Écrit `lecture.jsonl` ; renvoie le nombre de phrases."""
+    from .corpora import detect_columns, load_any
+
+    ds = load_any(dataset, split="train")
+    cols = detect_columns(ds.features)
+    if cols.audio:
+        ds = ds.remove_columns([cols.audio])
+    textes = ([row[cols.bm] for row in ds[cols.nested]] if cols.nested else ds[cols.bm])
+    return _ecrire_lecture(textes, out_path, dataset, n, seed, min_mots, max_mots)
+
+
+def _ecrire_lecture(textes, out_path, source, n, seed, min_mots, max_mots) -> int:
+    choisies, vues = [], set()
+    for t in textes:
+        t = normalize(t or "", lower=False)
+        cle = t.lower()
+        if (not t or cle in vues or re.search(r"\d", t) or _RELIGIEUX.search(t)
+                or not min_mots <= len(t.split()) <= max_mots):
+            continue
+        vues.add(cle)
+        choisies.append(t)
+    random.Random(seed).shuffle(choisies)
+    lignes = [{"id": f"lu-{k:04d}", "bm": t, "source": source}
+              for k, t in enumerate(choisies[:n], 1)]
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(out, lignes)
+    return len(lignes)
+
+
+# --- lots à juger -------------------------------------------------------------
+
+def trouver_rapport(dossier: str | Path, nom: str) -> Path | None:
+    """Le rapport de eval.baselines le plus récent qui porte ce nom."""
+    trouves = []
+    for p in sorted(Path(dossier).glob("*.json")):
+        try:
+            if json.loads(p.read_text(encoding="utf-8")).get("nom") == nom:
+                trouves.append(p)
+        except ValueError:
+            continue
+    return trouves[-1] if trouves else None
+
+
+def _details(rapport: Path) -> tuple[str, str, dict[str, dict]]:
+    entete = json.loads(rapport.read_text(encoding="utf-8"))
+    lignes = _read_jsonl(rapport.with_suffix(".details.jsonl"))
+    return (entete.get("nom") or rapport.stem, entete.get("maillon", ""),
+            {str(r["id"]): r for r in lignes})
+
+
+def _hypothese(ligne: dict, sens: str) -> str | None:
+    """La traduction d'une ligne de rapport. En bm2fr, celle d'un rapport de
+    traduction (hyp_fr), du bout-en-bout (hyp_fr, depuis l'audio) ou de la
+    cascade (mt_depuis_asr : la traduction de ce que l'ASR a entendu)."""
+    if sens == "fr2bm":
+        return ligne.get("hyp_bm")
+    return ligne.get("hyp_fr", ligne.get("mt_depuis_asr"))
+
+
+def preparer_lot(rapport_a: str | Path, rapport_b: str | Path, sens: str,
+                 dossier: str | Path, n: int = 100, seed: int = 0,
+                 nom: str | None = None) -> tuple[Path, dict]:
+    """Paires de traductions à juger à l'aveugle, à partir de deux rapports de
+    traduction (`eval.baselines mt`) sur les mêmes phrases.
+
+    `sens` : « fr2bm » (on juge du bambara, la source est en français) ou
+    « bm2fr ». En bm2fr, les rapports peuvent aussi être ceux de la chaîne
+    depuis l'audio (`eval.baselines asr`) : cascade contre bout-en-bout,
+    jugés sur la transcription de référence. Les phrases traduites à
+    l'identique par les deux systèmes ne départagent rien : elles sont
+    comptées, pas montrées. Le côté (A ou B) de chaque système est tiré au
+    hasard à chaque phrase."""
+    if sens not in ("fr2bm", "bm2fr"):
+        raise ValueError("sens attendu : fr2bm ou bm2fr")
+    src_key = "ref_fr" if sens == "fr2bm" else "ref_bm"
+    nom_a, maillon_a, a = _details(Path(rapport_a))
+    nom_b, maillon_b, b = _details(Path(rapport_b))
+    if sens == "fr2bm" and "asr" in (maillon_a, maillon_b):
+        raise ValueError("fr2bm se juge sur des rapports de traduction (eval.baselines mt) : "
+                         "dans un rapport de reconnaissance, hyp_bm est une transcription")
+    hyp_a = {i: _hypothese(r, sens) for i, r in a.items()}
+    hyp_b = {i: _hypothese(r, sens) for i, r in b.items()}
+    communs = [i for i in a if i in b and a[i].get(src_key) and hyp_a[i] is not None
+               and hyp_b.get(i) is not None and a[i].get(src_key) == b[i].get(src_key)]
+    differents = [i for i in communs if hyp_a[i].strip() != hyp_b[i].strip()]
+    rng = random.Random(seed)
+    choisis = sorted(rng.sample(differents, min(n, len(differents))), key=differents.index)
+
+    nom = nom or _slug(f"{nom_a}-contre-{nom_b}-{sens}")
+    items = []
+    for k, i in enumerate(choisis, 1):
+        sides = [(nom_a, hyp_a[i]), (nom_b, hyp_b[i])]
+        if rng.random() < 0.5:
+            sides.reverse()
+        items.append({"id": f"{nom}-{k:03d}", "lot": nom, "sens": sens, "ref_id": i,
+                      "source": a[i][src_key], "a": sides[0][1], "b": sides[1][1],
+                      "systeme_a": sides[0][0], "systeme_b": sides[1][0]})
+    out = Path(dossier) / "lots" / f"{nom}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(out, items)
+    return out, {"communes": len(communs), "identiques": len(communs) - len(differents),
+                 "retenues": len(items)}
+
+
+def _slug(text: str) -> str:
+    text = re.sub(r"[^\w]+", "-", normalize(text).replace("→", "-"))
+    return text.strip("-")[:80]
+
+
+def p_signe(gagnees: int, perdues: int) -> float:
+    """p bilatéral du test du signe : les égalités sont écartées."""
+    n = gagnees + perdues
+    if n == 0:
+        return 1.0
+    k = min(gagnees, perdues)
+    p = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
+    return min(1.0, 2 * p)
+
+
+# --- l'atelier ----------------------------------------------------------------
+
+@dataclass
+class Prise:
+    id: str
+    mode: str                    # "dire" ou "lire"
+    audio: str                   # relatif au dossier de l'atelier
+    speaker: str
+    prompt_id: str
+    texte: str                   # français pour « dire », bambara pour « lire »
+    rubrique: str = ""
+    code_switching: bool = False
+    argot: str = ""              # mots familiers employés, s'il y en a
+    conditions: str = ""
+    duration_s: float = 0.0
+    recorded_at: str = ""
+
+
+@dataclass
+class Jugement:
+    id: str
+    lot: str
+    item: str
+    juge: str
+    choix: str                   # une clé de CHOIX
+    prefere: str = ""            # système préféré, en clair ; vide en cas d'égalité
+    recorded_at: str = ""
+
+
+@dataclass
+class Mot:
+    id: str
+    forme: str
+    sens_fr: str
+    equivalent_bm: str = ""
+    exemple: str = ""
+    type: str = "argot"
+    auteur: str = ""
+    added_at: str = ""
+
+
+class Atelier:
+    """Dossier de l'atelier. Sûr en présence de plusieurs contributeurs en
+    même temps (Gradio traite les événements dans des fils séparés)."""
+
+    def __init__(self, root: str | Path):
+        self.root = Path(root)
+        self._lock = threading.Lock()
+
+    def _path(self, name: str) -> Path:
+        return self.root / name
+
+    def _append(self, name: str, row: dict) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(self._path(name), _read_jsonl(self._path(name)) + [row])
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now().isoformat(timespec="seconds")
+
+    # --- contributeurs ------------------------------------------------------
+
+    def locuteurs(self) -> list[Speaker]:
+        return [_from_dict(Speaker, r) for r in _read_jsonl(self._path("locuteurs.jsonl"))]
+
+    def locuteur(self, speaker_id: str) -> Speaker:
+        for s in self.locuteurs():
+            if s.id == speaker_id:
+                return s
+        raise KeyError(f"contributeur inconnu : {speaker_id}")
+
+    def ajouter_locuteur(self, gender: str, **info) -> Speaker:
+        if not info.get("consent"):
+            raise ValueError("pas d'enregistrement sans consentement")
+        if gender not in ("f", "m"):
+            raise ValueError("genre attendu : 'f' ou 'm'")
+        with self._lock:
+            rows = _read_jsonl(self._path("locuteurs.jsonl"))
+            spk = Speaker(id=_next_id([r["id"] for r in rows], "spk-", 2), gender=gender,
+                          consent_date=info.pop("consent_date", "") or self._now()[:10],
+                          **info)
+            self._append("locuteurs.jsonl", asdict(spk))
+        return spk
+
+    # --- prises de son ------------------------------------------------------
+
+    def prises(self, mode: str | None = None, speaker: str | None = None) -> list[Prise]:
+        modes = [mode] if mode else list(MODES)
+        out = []
+        for m in modes:
+            out += [_from_dict(Prise, r) for r in _read_jsonl(self._path(f"{m}.jsonl"))]
+        return [p for p in out if speaker is None or p.speaker == speaker]
+
+    def enregistrer(self, mode: str, speaker: str, phrase: dict, audio: np.ndarray,
+                    sample_rate: int, code_switching: bool = False, argot: str = "",
+                    conditions: str = "") -> tuple[Prise, list[str]]:
+        """Écrit le WAV et sa ligne. Renvoie aussi les problèmes audio, pour
+        proposer de recommencer tout de suite (« Annuler la dernière »)."""
+        if mode not in MODES:
+            raise ValueError(f"mode inconnu : {mode}")
+        if not self.locuteur(speaker).consent:
+            raise ValueError(f"{speaker} n'a pas donné son consentement")
+        wav = to_mono_16k(audio, sample_rate)
+        problemes = check_audio(wav)
+        if "enregistrement vide" in problemes:
+            raise ValueError("enregistrement vide : rien n'a été capté")
+
+        import soundfile as sf
+
+        texte = phrase["fr"] if mode == "dire" else phrase["bm"]
+        with self._lock:
+            prefix = "di-" if mode == "dire" else "li-"
+            rows = _read_jsonl(self._path(f"{mode}.jsonl"))
+            pid = _next_id([r["id"] for r in rows], prefix, 5)
+            rel = f"audio/{pid}.wav"
+            (self.root / "audio").mkdir(parents=True, exist_ok=True)
+            sf.write(str(self.root / rel), wav, SAMPLE_RATE, subtype="PCM_16")
+            prise = Prise(id=pid, mode=mode, audio=rel, speaker=speaker,
+                          prompt_id=phrase["id"], texte=texte,
+                          rubrique=phrase.get("rubrique", ""),
+                          code_switching=bool(code_switching), argot=argot.strip(),
+                          conditions=conditions,
+                          duration_s=round(len(wav) / SAMPLE_RATE, 2),
+                          recorded_at=self._now())
+            self._append(f"{mode}.jsonl", asdict(prise))
+        return prise, problemes
+
+    def annuler_derniere(self, mode: str, speaker: str) -> Prise | None:
+        """Retire la dernière prise de ce contributeur dans ce mode (ligne et
+        fichier) : la phrase revient en tête de la file."""
+        with self._lock:
+            rows = _read_jsonl(self._path(f"{mode}.jsonl"))
+            idx = [k for k, r in enumerate(rows) if r["speaker"] == speaker]
+            if not idx:
+                return None
+            row = rows.pop(idx[-1])
+            _write_jsonl(self._path(f"{mode}.jsonl"), rows)
+            (self.root / row["audio"]).unlink(missing_ok=True)
+        return _from_dict(Prise, row)
+
+    def passer(self, mode: str, speaker: str, prompt_id: str) -> None:
+        with self._lock:
+            self._append("passes.jsonl", {"mode": mode, "speaker": speaker,
+                                          "prompt_id": prompt_id, "at": self._now()})
+
+    def _faites(self, mode: str, speaker: str) -> set[str]:
+        faites = {p.prompt_id for p in self.prises(mode, speaker)}
+        faites |= {r["prompt_id"] for r in _read_jsonl(self._path("passes.jsonl"))
+                   if r["mode"] == mode and r["speaker"] == speaker}
+        return faites
+
+    def prochaine(self, mode: str, speaker: str, phrases: list[dict],
+                  rubrique: str | None = None) -> dict | None:
+        """Première phrase, dans l'ordre, que ce contributeur n'a ni dite ni
+        passée (dans la rubrique demandée, ou dans toutes)."""
+        faites = self._faites(mode, speaker)
+        for p in phrases:
+            if p["id"] not in faites and (not rubrique or p.get("rubrique") == rubrique):
+                return p
+        return None
+
+    def progression(self, mode: str, speaker: str, phrases: list[dict]) -> list[dict]:
+        """Par rubrique : phrases faites (dites ou passées) sur le total."""
+        faites = self._faites(mode, speaker)
+        par_rubrique: dict[str, dict] = {}
+        for p in phrases:
+            r = par_rubrique.setdefault(p.get("rubrique", ""), {
+                "rubrique": p.get("rubrique", ""), "titre": p.get("titre", "Lecture"),
+                "faites": 0, "total": 0})
+            r["total"] += 1
+            r["faites"] += p["id"] in faites
+        return list(par_rubrique.values())
+
+    def minutes(self, mode: str | None = None, speaker: str | None = None) -> float:
+        return round(sum(p.duration_s for p in self.prises(mode, speaker)) / 60, 1)
+
+    def phrases_a_lire(self) -> list[dict]:
+        return _read_jsonl(self._path("lecture.jsonl"))
+
+    # --- jugements ----------------------------------------------------------
+
+    def lots(self) -> list[str]:
+        return sorted(p.stem for p in (self.root / "lots").glob("*.jsonl"))
+
+    def items(self, lot: str) -> list[dict]:
+        return _read_jsonl(self.root / "lots" / f"{lot}.jsonl")
+
+    def jugements(self, lot: str | None = None) -> list[Jugement]:
+        rows = [_from_dict(Jugement, r) for r in _read_jsonl(self._path("jugements.jsonl"))]
+        return [j for j in rows if lot is None or j.lot == lot]
+
+    def prochain_item(self, lot: str, juge: str) -> dict | None:
+        faits = {j.item for j in self.jugements(lot) if j.juge == juge}
+        return next((i for i in self.items(lot) if i["id"] not in faits), None)
+
+    def juger(self, lot: str, juge: str, item_id: str, choix: str) -> Jugement:
+        if choix not in CHOIX:
+            raise ValueError(f"choix inconnu : {choix}")
+        item = next((i for i in self.items(lot) if i["id"] == item_id), None)
+        if item is None:
+            raise KeyError(f"phrase inconnue dans {lot} : {item_id}")
+        prefere = {"A": item["systeme_a"], "B": item["systeme_b"]}.get(choix, "")
+        with self._lock:
+            rows = _read_jsonl(self._path("jugements.jsonl"))
+            j = Jugement(id=_next_id([r["id"] for r in rows], "ju-", 5), lot=lot,
+                         item=item_id, juge=juge, choix=choix, prefere=prefere,
+                         recorded_at=self._now())
+            self._append("jugements.jsonl", asdict(j))
+        return j
+
+    def resultats(self, lot: str) -> dict:
+        """Préférences levées (quel système a été préféré), et test du signe
+        sur les jugements tranchés."""
+        items = self.items(lot)
+        systemes = sorted({i["systeme_a"] for i in items} | {i["systeme_b"] for i in items})
+        js = self.jugements(lot)
+        gagnes = {s: sum(j.prefere == s for j in js) for s in systemes}
+        res = {"lot": lot, "items": len(items), "jugements": len(js), "preferences": gagnes,
+               "egal_bon": sum(j.choix == "egal_bon" for j in js),
+               "egal_mauvais": sum(j.choix == "egal_mauvais" for j in js)}
+        if len(systemes) == 2:
+            res["p_signe"] = p_signe(gagnes[systemes[0]], gagnes[systemes[1]])
+        return res
+
+    # --- lexique ------------------------------------------------------------
+
+    def lexique(self) -> list[Mot]:
+        return [_from_dict(Mot, r) for r in _read_jsonl(self._path("lexique.jsonl"))]
+
+    def ajouter_mot(self, forme: str, sens_fr: str, equivalent_bm: str = "",
+                    exemple: str = "", type: str = "argot", auteur: str = "") -> Mot:
+        """Ajoute un mot, ou complète celui qui a la même forme."""
+        forme, sens_fr = forme.strip(), sens_fr.strip()
+        if not forme or not sens_fr:
+            raise ValueError("il faut le mot et son sens en français")
+        if type not in TYPES_LEXIQUE:
+            raise ValueError(f"type attendu : {', '.join(TYPES_LEXIQUE)}")
+        with self._lock:
+            rows = _read_jsonl(self._path("lexique.jsonl"))
+            rows = [r for r in rows if r["forme"].lower() != forme.lower()]
+            mot = Mot(id=_next_id([r["id"] for r in _read_jsonl(self._path("lexique.jsonl"))],
+                                  "mot-", 4),
+                      forme=forme, sens_fr=sens_fr, equivalent_bm=equivalent_bm.strip(),
+                      exemple=exemple.strip(), type=type, auteur=auteur, added_at=self._now())
+            _write_jsonl(self._path("lexique.jsonl"), rows + [asdict(mot)])
+        return mot
+
+    def retirer_mot(self, forme: str) -> bool:
+        with self._lock:
+            rows = _read_jsonl(self._path("lexique.jsonl"))
+            reste = [r for r in rows if r["forme"].lower() != forme.strip().lower()]
+            _write_jsonl(self._path("lexique.jsonl"), reste)
+        return len(reste) < len(rows)
+
+    # --- bilan et exports ---------------------------------------------------
+
+    def bilan(self, phrases_dire: list[dict]) -> dict:
+        lecture = self.phrases_a_lire()
+        par_locuteur = []
+        for s in self.locuteurs():
+            par_locuteur.append({
+                "locuteur": s.id, "genre": s.gender,
+                "dites": len(self.prises("dire", s.id)),
+                "a_dire": len(phrases_dire),
+                "lues": len(self.prises("lire", s.id)),
+                "minutes_lues": self.minutes("lire", s.id),
+                "jugements": sum(j.juge == s.id for j in self.jugements()),
+            })
+        return {"locuteurs": par_locuteur,
+                "minutes": {"dire": self.minutes("dire"), "lire": self.minutes("lire")},
+                "phrases_a_lire": len(lecture), "lexique": len(self.lexique()),
+                "lots": [self.resultats(lot) for lot in self.lots()]}
+
+    def exporter(self) -> dict[str, Path]:
+        """Fichiers prêts à servir, dans le dossier de l'atelier :
+
+        - `testset-dire.jsonl` : jeu de test pour `eval.run_eval` (audio et
+          traduction française ; pas de transcription bambara, donc pas de
+          WER, mais le chrF++ depuis l'audio, la mesure centrale) ;
+        - `lecture-export.jsonl` : audio et texte bambara exact (voix,
+          reconnaissance) ;
+        - `lexique.tsv`."""
+        genres = {s.id: s.gender for s in self.locuteurs()}
+        regions = {s.id: s.region for s in self.locuteurs()}
+        out = {}
+        test = [{"id": p.id, "audio": p.audio, "transcript_bm": "", "translation_fr": p.texte,
+                 "speaker": p.speaker, "gender": genres.get(p.speaker, ""),
+                 "region": regions.get(p.speaker, ""), "register": "dit",
+                 "code_switching": p.code_switching, "duration_s": p.duration_s,
+                 "rubrique": p.rubrique, "conditions": p.conditions, "argot": p.argot}
+                for p in self.prises("dire")]
+        out["testset"] = self.root / "testset-dire.jsonl"
+        _write_jsonl(out["testset"], test)
+        lecture = [{"audio": p.audio, "text": p.texte, "speaker": p.speaker,
+                    "duration_s": p.duration_s} for p in self.prises("lire")]
+        out["lecture"] = self.root / "lecture-export.jsonl"
+        _write_jsonl(out["lecture"], lecture)
+        out["lexique"] = self.root / "lexique.tsv"
+        lignes = ["forme\tsens_fr\tequivalent_bm\ttype\texemple"]
+        lignes += ["\t".join([m.forme, m.sens_fr, m.equivalent_bm, m.type, m.exemple])
+                   for m in self.lexique()]
+        out["lexique"].write_text("\n".join(lignes) + "\n", encoding="utf-8")
+        return out
+
+
+# --- ligne de commande --------------------------------------------------------
+
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--racine", type=Path, required=True, help="dossier de l'atelier")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("lecture", help="choisir les phrases bambara à lire")
+    sp.add_argument("--dataset", default="RobotsMaliAI/bayelemabaga")
+    sp.add_argument("-n", type=int, default=400)
+    sp = sub.add_parser("lot", help="préparer des paires de traductions à juger")
+    sp.add_argument("--resultats", type=Path, required=True,
+                    help="dossier des rapports de eval.baselines")
+    sp.add_argument("--noms", nargs=2, required=True, metavar=("NOM_A", "NOM_B"))
+    sp.add_argument("--sens", choices=["fr2bm", "bm2fr"], required=True)
+    sp.add_argument("-n", type=int, default=100)
+    sub.add_parser("exporter", help="jeu de test, lecture et lexique")
+    args = p.parse_args(argv)
+
+    if args.cmd == "lecture":
+        n = preparer_lecture(args.racine / "lecture.jsonl", args.dataset, args.n)
+        print(f"{n} phrases à lire : {args.racine / 'lecture.jsonl'}")
+    elif args.cmd == "lot":
+        rapports = [trouver_rapport(args.resultats, nom) for nom in args.noms]
+        if None in rapports:
+            raise SystemExit(f"rapport introuvable dans {args.resultats} : "
+                             f"{[n for n, r in zip(args.noms, rapports) if r is None]}")
+        path, stats = preparer_lot(*rapports, args.sens, args.racine, args.n)
+        print(f"{path} : {stats['retenues']} paires ({stats['identiques']} traductions "
+              f"identiques écartées sur {stats['communes']})")
+    else:
+        for k, path in Atelier(args.racine).exporter().items():
+            print(f"{k} : {path}")
+
+
+if __name__ == "__main__":
+    main()
