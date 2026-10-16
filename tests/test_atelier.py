@@ -385,18 +385,20 @@ def test_notebook_phase3_retient_l_assemblage_qui_comprend_le_mieux_ta_voix(tmp_
     out, ckpt = tmp_path / "out", tmp_path / "ckpt"
     (ckpt / "nllb-bm2fr-v2").mkdir(parents=True)
     (ckpt / "nllb-bm2fr-v2" / "model.safetensors").write_bytes(b"")
+    moyenne = tmp_path / "nllb-bm2fr-moyenne"
     atelier = tmp_path / "atelier"
     atelier.mkdir()
     (atelier / "dire.jsonl").write_text("{}\n")
     chrf = {"Whisper-NLLB-v1": 31.0, "Whisper-NLLB-v2": 28.0, "Soloni-NLLB-v1": 24.0,
-            "Soloni-NLLB-v2": 26.7}
+            "Soloni-NLLB-v2": 26.7, "Whisper-NLLB-moyenne": 30.5, "Soloni-NLLB-moyenne": 25.0}
     for cle, score in chrf.items():
         d = out / "maison-assemblages" / cle
         d.mkdir(parents=True)
         (d / "cascade-20261017-090000.json").write_text(json.dumps(
             {"nom": cle, "mt_in_depuis_asr": {"chrf": score}}))
     code = _sans_shell(cellule.replace("/content/drive/MyDrive/bambara/atelier", str(atelier))
-                       .replace("/content/assemblage-", str(tmp_path / "assemblage-")))
+                       .replace("/content/assemblage-", str(tmp_path / "assemblage-"))
+                       .replace("/content/nllb-bm2fr-moyenne", str(moyenne)))
     cfg = tmp_path / "assistant.json"
     ns = {"CKPT": str(ckpt), "OUT": str(out), "CFG": str(cfg), "WHISPER": "whisper",
           "SOLONI": "soloni", "NLLB_BM2FR": "v2-par-defaut", "NLLB_FR2BM": "fr2bm",
@@ -407,4 +409,6 @@ def test_notebook_phase3_retient_l_assemblage_qui_comprend_le_mieux_ta_voix(tmp_
                                            "mt_in": {"model_id": "nllb-v1"},
                                            "mt_out": {"model_id": "fr2bm"}}
     sortie = capsys.readouterr().out
-    assert sortie.index("Whisper + NLLB v1 : chrF++ 31.0") < sortie.index("Soloni + NLLB v1")
+    assert sortie.index("Whisper + NLLB v1 : chrF++ 31.0") < sortie.index(
+        "Whisper + NLLB moyenne : chrF++ 30.5") < sortie.index("Soloni + NLLB v1")
+    assert set(ns["TRADUCTION"]) == {"NLLB v1", "NLLB v2", "NLLB moyenne"}

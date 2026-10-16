@@ -307,3 +307,44 @@ def test_significativite_sur_les_rapports_d_eval_baselines(work, capsys):
     out = capsys.readouterr().out
     assert out.splitlines()[0] == "| Métrique | n | cascade | bout-en-bout |"
     assert "| chrF++ (depuis ASR) | 6 |" in out and "écart" in out
+
+
+def test_moyenne_des_poids_de_deux_versions(tmp_path):
+    """v1 et v2 de NLLB (même architecture, la v2 reprise de la v1) : leur
+    moyenne se recharge, traduit, et vaut exactement la moyenne des poids."""
+    import torch
+    from safetensors.torch import load_file, save_file
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from moyenne_poids import moyenne
+
+    v1 = tiny_models.nllb(tmp_path / "v1")
+    v2 = tmp_path / "v2"
+    import shutil
+    shutil.copytree(v1, v2)
+    poids = load_file(str(v2 / "model.safetensors"))
+    save_file({k: t + 1.0 for k, t in poids.items()}, str(v2 / "model.safetensors"),
+              metadata={"format": "pt"})
+    (v2 / "optimizer.pt").write_bytes(b"x")  # état d'entraînement : pas copié
+
+    out = moyenne(v1, v2, tmp_path / "moyenne", poids=0.25)
+    assert not (out / "optimizer.pt").exists() and (out / "config.json").exists()
+    m = load_file(str(out / "model.safetensors"))
+    k = next(iter(m))
+    assert torch.allclose(m[k], load_file(str(v1 / "model.safetensors"))[k] + 0.25)
+
+    model = AutoModelForSeq2SeqLM.from_pretrained(out)
+    tok = AutoTokenizer.from_pretrained(out, src_lang="bam_Latn")
+    model.generate(**tok("n bɛ taa", return_tensors="pt"), max_new_tokens=3)
+
+    autre = tiny_models.nllb(tmp_path / "autre")
+    cfg = json.loads((autre / "config.json").read_text())
+    cfg["d_model"] = 8
+    (autre / "config.json").write_text(json.dumps(cfg))
+    from transformers import M2M100Config, M2M100ForConditionalGeneration
+    M2M100ForConditionalGeneration(M2M100Config(**{k: v for k, v in cfg.items()
+                                                   if k not in ("architectures",)})
+                                   ).save_pretrained(autre)
+    with pytest.raises(ValueError, match="formes différentes|architectures différentes"):
+        moyenne(v1, autre, tmp_path / "x")
