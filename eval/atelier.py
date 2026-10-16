@@ -4,9 +4,11 @@ Quatre gestes, tous à la portée d'un locuteur qui parle le bambara sans
 l'écrire (docs/ATELIER.md) :
 
 - **dire** : une phrase française s'affiche, on la dit en bambara, avec ses
-  mots → audio bambara + traduction française de référence. C'est un jeu de
-  test de la chaîne (chrF++ depuis l'audio, `eval.run_eval`) sur la vraie
-  façon de parler, et des données pour le bout-en-bout ;
+  mots, à un ami, à un inconnu ou à une personne âgée (on ne parle pas de
+  la même façon aux trois) → audio bambara + traduction française de
+  référence, tutoyée ou vouvoyée selon le cas. C'est un jeu de test de la
+  chaîne (chrF++ depuis l'audio, `eval.run_eval`) sur la vraie façon de
+  parler, et des données pour le bout-en-bout ;
 - **lire** : une phrase bambara s'affiche, on la lit → audio + texte exact.
   Données de synthèse vocale (une voix) et de reconnaissance ;
 - **juger** : deux traductions d'une même phrase, à l'aveugle → préférence.
@@ -48,6 +50,12 @@ ROOT = Path(__file__).resolve().parent.parent
 PHRASES_A_DIRE = ROOT / "data" / "atelier" / "a_dire.json"
 
 MODES = ("dire", "lire")
+# À qui l'on parle : la même phrase ne se dit pas pareil à un ami, à un
+# inconnu ou à une personne âgée (formules, respect, argot). Chaque phrase
+# peut se dire aux trois ; le français de référence est vouvoyé pour les
+# deux derniers.
+INTERLOCUTEURS = {"ami": "un ami", "inconnu": "un inconnu", "aine": "une personne âgée"}
+VOUVOIEMENT = ("inconnu", "aine")
 CHOIX = {"A": "A meilleure", "B": "B meilleure",
          "egal_bon": "les deux bonnes", "egal_mauvais": "les deux mauvaises"}
 TYPES_LEXIQUE = ("argot", "mot français", "mot anglais", "expression", "autre")
@@ -63,19 +71,39 @@ _RELIGIEUX = re.compile(r"\b(yesu|krista|krisita|matigi|kira|musa|isirayɛli|isi
 # --- phrases ------------------------------------------------------------------
 
 def charger_phrases_a_dire(path: str | Path = PHRASES_A_DIRE) -> list[dict]:
-    """Phrases françaises à dire, dans l'ordre : {id, rubrique, titre, fr}."""
+    """Phrases françaises à dire, dans l'ordre : {id, rubrique, titre, fr},
+    plus « vous » (la forme vouvoyée) pour une phrase qui s'adresse à
+    quelqu'un. Dans le fichier, une phrase est une chaîne, ou {fr, vous}."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     phrases = []
     for rub in data["rubriques"]:
-        for k, fr in enumerate(rub["phrases"], 1):
-            if not fr.strip():
+        for k, entree in enumerate(rub["phrases"], 1):
+            formes = {"fr": entree} if isinstance(entree, str) else dict(entree)
+            if not (formes.get("fr") or "").strip():
                 raise ValueError(f"{path} : phrase vide dans « {rub['titre']} »")
-            phrases.append({"id": f"{rub['id']}-{k:02d}", "rubrique": rub["id"],
-                            "titre": rub["titre"], "fr": fr.strip()})
+            phrase = {"id": f"{rub['id']}-{k:02d}", "rubrique": rub["id"],
+                      "titre": rub["titre"], "fr": formes["fr"].strip()}
+            if (formes.get("vous") or "").strip():
+                phrase["vous"] = formes["vous"].strip()
+            phrases.append(phrase)
     ids = [p["id"] for p in phrases]
     if len(set(ids)) != len(ids):
         raise ValueError(f"{path} : identifiants de rubrique en double")
     return phrases
+
+
+def texte_fr(phrase: dict, interlocuteur: str = "ami") -> str:
+    """Le français de référence pour cet interlocuteur : vouvoyé pour un
+    inconnu ou une personne âgée, quand la phrase s'adresse à quelqu'un."""
+    if interlocuteur in VOUVOIEMENT and phrase.get("vous"):
+        return phrase["vous"]
+    return phrase["fr"]
+
+
+def _interlocuteur(row: dict) -> str:
+    """Celui d'une prise ou d'un passage. Les prises d'avant le choix de
+    l'interlocuteur étaient dites sur une phrase tutoyée : « ami »."""
+    return row.get("interlocuteur") or "ami"
 
 
 def rubriques(phrases: list[dict]) -> list[tuple[str, str]]:
@@ -222,6 +250,7 @@ class Prise:
     prompt_id: str
     texte: str                   # français pour « dire », bambara pour « lire »
     rubrique: str = ""
+    interlocuteur: str = ""      # « dire » : une clé de INTERLOCUTEURS
     code_switching: bool = False
     argot: str = ""              # mots familiers employés, s'il y en a
     conditions: str = ""
@@ -306,11 +335,15 @@ class Atelier:
 
     def enregistrer(self, mode: str, speaker: str, phrase: dict, audio: np.ndarray,
                     sample_rate: int, code_switching: bool = False, argot: str = "",
-                    conditions: str = "") -> tuple[Prise, list[str]]:
+                    conditions: str = "", interlocuteur: str = "ami"
+                    ) -> tuple[Prise, list[str]]:
         """Écrit le WAV et sa ligne. Renvoie aussi les problèmes audio, pour
-        proposer de recommencer tout de suite (« Annuler la dernière »)."""
+        proposer de recommencer tout de suite (« Annuler la dernière »).
+        `interlocuteur` : à qui la phrase est dite (« dire » seulement)."""
         if mode not in MODES:
             raise ValueError(f"mode inconnu : {mode}")
+        if mode == "dire" and interlocuteur not in INTERLOCUTEURS:
+            raise ValueError(f"interlocuteur inconnu : {interlocuteur}")
         if not self.locuteur(speaker).consent:
             raise ValueError(f"{speaker} n'a pas donné son consentement")
         wav = to_mono_16k(audio, sample_rate)
@@ -320,7 +353,7 @@ class Atelier:
 
         import soundfile as sf
 
-        texte = phrase["fr"] if mode == "dire" else phrase["bm"]
+        texte = texte_fr(phrase, interlocuteur) if mode == "dire" else phrase["bm"]
         with self._lock:
             prefix = "di-" if mode == "dire" else "li-"
             rows = _read_jsonl(self._path(f"{mode}.jsonl"))
@@ -331,6 +364,7 @@ class Atelier:
             prise = Prise(id=pid, mode=mode, audio=rel, speaker=speaker,
                           prompt_id=phrase["id"], texte=texte,
                           rubrique=phrase.get("rubrique", ""),
+                          interlocuteur=interlocuteur if mode == "dire" else "",
                           code_switching=bool(code_switching), argot=argot.strip(),
                           conditions=conditions,
                           duration_s=round(len(wav) / SAMPLE_RATE, 2),
@@ -351,30 +385,61 @@ class Atelier:
             (self.root / row["audio"]).unlink(missing_ok=True)
         return _from_dict(Prise, row)
 
-    def passer(self, mode: str, speaker: str, prompt_id: str) -> None:
+    def passer(self, mode: str, speaker: str, prompt_id: str,
+               interlocuteur: str = "ami") -> None:
+        row = {"mode": mode, "speaker": speaker, "prompt_id": prompt_id, "at": self._now()}
+        if mode == "dire":
+            row["interlocuteur"] = interlocuteur
         with self._lock:
-            self._append("passes.jsonl", {"mode": mode, "speaker": speaker,
-                                          "prompt_id": prompt_id, "at": self._now()})
+            self._append("passes.jsonl", row)
 
-    def _faites(self, mode: str, speaker: str) -> set[str]:
-        faites = {p.prompt_id for p in self.prises(mode, speaker)}
+    def _faites(self, mode: str, speaker: str, interlocuteur: str = "ami") -> set[str]:
+        """Phrases dites ou passées ; en « dire », pour cet interlocuteur."""
+        garder = (lambda r: _interlocuteur(r) == interlocuteur) if mode == "dire" \
+            else (lambda r: True)
+        faites = {p.prompt_id for p in self.prises(mode, speaker) if garder(asdict(p))}
         faites |= {r["prompt_id"] for r in _read_jsonl(self._path("passes.jsonl"))
-                   if r["mode"] == mode and r["speaker"] == speaker}
+                   if r["mode"] == mode and r["speaker"] == speaker and garder(r)}
         return faites
 
     def prochaine(self, mode: str, speaker: str, phrases: list[dict],
-                  rubrique: str | None = None) -> dict | None:
+                  rubrique: str | None = None, interlocuteur: str = "ami") -> dict | None:
         """Première phrase, dans l'ordre, que ce contributeur n'a ni dite ni
-        passée (dans la rubrique demandée, ou dans toutes)."""
-        faites = self._faites(mode, speaker)
+        passée (dans la rubrique demandée, ou dans toutes ; en « dire », à
+        cet interlocuteur)."""
+        faites = self._faites(mode, speaker, interlocuteur)
         for p in phrases:
             if p["id"] not in faites and (not rubrique or p.get("rubrique") == rubrique):
                 return p
         return None
 
-    def progression(self, mode: str, speaker: str, phrases: list[dict]) -> list[dict]:
-        """Par rubrique : phrases faites (dites ou passées) sur le total."""
-        faites = self._faites(mode, speaker)
+    def deja_faite(self, mode: str, speaker: str, prompt_id: str,
+                   interlocuteur: str = "ami") -> bool:
+        return prompt_id in self._faites(mode, speaker, interlocuteur)
+
+    def versions(self, speaker: str, prompt_id: str) -> dict[str, int]:
+        """Combien de fois ce contributeur a dit cette phrase, à qui (une même
+        personne peut l'entendre de plusieurs façons), dans l'ordre de
+        INTERLOCUTEURS ; seulement ceux à qui il l'a dite."""
+        dites = [_interlocuteur(asdict(p)) for p in self.prises("dire", speaker)
+                 if p.prompt_id == prompt_id]
+        return {i: dites.count(i) for i in INTERLOCUTEURS if i in dites}
+
+    def autre_interlocuteur(self, speaker: str, prompt_id: str, actuel: str) -> str | None:
+        """Le suivant, après `actuel`, à qui cette phrase reste à dire (ni dite
+        ni passée) ; None si elle a été faite pour tous."""
+        ordre = list(INTERLOCUTEURS)
+        k = ordre.index(actuel) if actuel in ordre else -1
+        for i in ordre[k + 1:] + ordre[:k + 1]:
+            if i != actuel and prompt_id not in self._faites("dire", speaker, i):
+                return i
+        return None
+
+    def progression(self, mode: str, speaker: str, phrases: list[dict],
+                    interlocuteur: str = "ami") -> list[dict]:
+        """Par rubrique : phrases faites (dites ou passées) sur le total ; en
+        « dire », pour cet interlocuteur."""
+        faites = self._faites(mode, speaker, interlocuteur)
         par_rubrique: dict[str, dict] = {}
         for p in phrases:
             r = par_rubrique.setdefault(p.get("rubrique", ""), {
@@ -383,6 +448,11 @@ class Atelier:
             r["total"] += 1
             r["faites"] += p["id"] in faites
         return list(par_rubrique.values())
+
+    def par_interlocuteur(self, speaker: str | None = None) -> dict[str, int]:
+        """Prises « dire » par interlocuteur (de ce contributeur, ou de tous)."""
+        dites = [_interlocuteur(asdict(p)) for p in self.prises("dire", speaker)]
+        return {i: dites.count(i) for i in INTERLOCUTEURS}
 
     def minutes(self, mode: str | None = None, speaker: str | None = None) -> float:
         return round(sum(p.duration_s for p in self.prises(mode, speaker)) / 60, 1)
@@ -471,15 +541,18 @@ class Atelier:
         lecture = self.phrases_a_lire()
         par_locuteur = []
         for s in self.locuteurs():
+            par_qui = self.par_interlocuteur(s.id)
             par_locuteur.append({
                 "locuteur": s.id, "genre": s.gender,
-                "dites": len(self.prises("dire", s.id)),
+                "dites": sum(par_qui.values()),
+                "par_interlocuteur": par_qui,
                 "a_dire": len(phrases_dire),
                 "lues": len(self.prises("lire", s.id)),
                 "minutes_lues": self.minutes("lire", s.id),
                 "jugements": sum(j.juge == s.id for j in self.jugements()),
             })
         return {"locuteurs": par_locuteur,
+                "par_interlocuteur": self.par_interlocuteur(),
                 "minutes": {"dire": self.minutes("dire"), "lire": self.minutes("lire")},
                 "phrases_a_lire": len(lecture), "lexique": len(self.lexique()),
                 "lots": [self.resultats(lot) for lot in self.lots()]}
@@ -499,6 +572,7 @@ class Atelier:
         test = [{"id": p.id, "audio": p.audio, "transcript_bm": "", "translation_fr": p.texte,
                  "speaker": p.speaker, "gender": genres.get(p.speaker, ""),
                  "region": regions.get(p.speaker, ""), "register": "dit",
+                 "interlocuteur": _interlocuteur(asdict(p)),
                  "code_switching": p.code_switching, "duration_s": p.duration_s,
                  "rubrique": p.rubrique, "conditions": p.conditions, "argot": p.argot}
                 for p in self.prises("dire")]

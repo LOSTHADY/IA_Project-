@@ -14,7 +14,7 @@ pytest.importorskip("soundfile")
 
 from eval.atelier import (  # noqa: E402
     Atelier, _ecrire_lecture, charger_phrases_a_dire, p_signe, preparer_lot, rubriques,
-    trouver_rapport,
+    texte_fr, trouver_rapport,
 )
 from eval.dataset import describe, load_testset  # noqa: E402
 
@@ -40,7 +40,13 @@ def test_phrases_a_dire():
     assert len(rubriques(PHRASES)) == 12
     assert {sum(p["rubrique"] == r for p in PHRASES) for r, _ in rubriques(PHRASES)} == {25}
     assert PHRASES[0] == {"id": "sal-01", "rubrique": "sal", "titre": "Salutations et politesse",
-                          "fr": "Bonjour, comment vas-tu ce matin ?"}
+                          "fr": "Bonjour, comment vas-tu ce matin ?",
+                          "vous": "Bonjour, comment allez-vous ce matin ?"}
+    # Une phrase qui s'adresse à quelqu'un a sa forme vouvoyée, et elle seule.
+    assert sum("vous" in p for p in PHRASES) == 70 and "vous" not in PHRASES[3]
+    assert texte_fr(PHRASES[0], "ami") == PHRASES[0]["fr"]
+    assert texte_fr(PHRASES[0], "aine") == texte_fr(PHRASES[0], "inconnu") == PHRASES[0]["vous"]
+    assert texte_fr(PHRASES[3], "aine") == PHRASES[3]["fr"]
 
 
 def test_pas_de_contributeur_sans_consentement(tmp_path):
@@ -76,6 +82,41 @@ def test_dire_enregistrer_passer_annuler_et_reprendre(atelier):
     # Un autre contributeur commence au début.
     atelier.ajouter_locuteur("f", consent=True)
     assert atelier.prochaine("dire", "spk-02", PHRASES)["id"] == "sal-01"
+
+
+def test_dire_a_plusieurs_personnes(atelier):
+    """Une phrase se dit à un ami, à un inconnu, à une personne âgée, et
+    plusieurs fois à la même personne : chaque version est une prise, et la
+    progression se compte par interlocuteur."""
+    sr, data = _voix()
+    sal01 = PHRASES[0]
+    ami, _ = atelier.enregistrer("dire", "spk-01", sal01, data, sr)  # « ami » par défaut
+    assert ami.interlocuteur == "ami" and ami.texte == sal01["fr"]
+    aine, _ = atelier.enregistrer("dire", "spk-01", sal01, data, sr, interlocuteur="aine")
+    assert aine.texte == "Bonjour, comment allez-vous ce matin ?"
+    atelier.enregistrer("dire", "spk-01", sal01, data, sr, interlocuteur="aine")  # autre façon
+    assert atelier.versions("spk-01", "sal-01") == {"ami": 1, "aine": 2}
+    with pytest.raises(ValueError, match="interlocuteur"):
+        atelier.enregistrer("dire", "spk-01", sal01, data, sr, interlocuteur="patron")
+
+    # Chacun sa file : sal-01 reste à dire à un inconnu.
+    assert atelier.prochaine("dire", "spk-01", PHRASES)["id"] == "sal-02"
+    assert atelier.prochaine("dire", "spk-01", PHRASES, interlocuteur="inconnu")["id"] == "sal-01"
+    assert atelier.autre_interlocuteur("spk-01", "sal-01", "ami") == "inconnu"
+    atelier.passer("dire", "spk-01", "sal-01", "inconnu")
+    assert atelier.autre_interlocuteur("spk-01", "sal-01", "ami") is None
+    assert atelier.deja_faite("dire", "spk-01", "sal-01", "inconnu")
+    prog = atelier.progression("dire", "spk-01", PHRASES, "aine")
+    assert sum(r["faites"] for r in prog) == 1
+    assert atelier.par_interlocuteur() == {"ami": 1, "inconnu": 0, "aine": 2}
+
+    # Une prise d'avant le choix de l'interlocuteur comptait pour un ami.
+    import json as _json
+    lignes = (atelier.root / "dire.jsonl").read_text(encoding="utf-8").splitlines()
+    vieille = {k: v for k, v in _json.loads(lignes[0]).items() if k != "interlocuteur"}
+    (atelier.root / "dire.jsonl").write_text(
+        "\n".join([_json.dumps(vieille)] + lignes[1:]) + "\n", encoding="utf-8")
+    assert atelier.versions("spk-01", "sal-01") == {"ami": 1, "aine": 2}
 
 
 def test_enregistrement_refuse_le_vide_et_les_inconnus(atelier):
@@ -185,14 +226,17 @@ def test_exports_et_jeu_de_test_sans_transcription(atelier):
     sr, data = _voix()
     for p in PHRASES[:3]:
         atelier.enregistrer("dire", "spk-01", p, data, sr, code_switching=p["id"] == "sal-02")
+    atelier.enregistrer("dire", "spk-01", PHRASES[0], data, sr, interlocuteur="aine")
     atelier.ajouter_mot("wai", "salut")
     out = atelier.exporter()
     items = load_testset(out["testset"])
-    assert [i.translation_fr for i in items] == [p["fr"] for p in PHRASES[:3]]
+    assert [i.translation_fr for i in items] == [p["fr"] for p in PHRASES[:3]] + [
+        "Bonjour, comment allez-vous ce matin ?"]
+    assert [i.extra["interlocuteur"] for i in items] == ["ami", "ami", "ami", "aine"]
     assert items[0].transcript_bm == "" and items[0].register == "dit"
     assert items[0].audio_path(out["testset"].parent).exists()
     d = describe(items)
-    assert d["n"] == 3 and d["part_code_switching"] == 0.333
+    assert d["n"] == 4 and d["part_code_switching"] == 0.25
     assert out["lexique"].read_text(encoding="utf-8").splitlines()[1].startswith("wai\tsalut")
 
 
@@ -220,11 +264,28 @@ def test_application(tmp_path):
     phrase, texte, prog = one["montrer_dire"]("spk-01", "")
     assert phrase["id"] == "sal-01" and "Bonjour" in texte and "0/300" in prog
 
-    sortie = one["enregistrer_dire"]("spk-01", "", phrase, _voix(), True, "wai", "salle calme")
+    sortie = one["enregistrer_dire"]("spk-01", "", "ami", phrase, _voix(), True, "wai",
+                                     "salle calme")
     assert sortie[0].startswith("✅") and sortie[2]["id"] == "sal-02" and "1/300" in sortie[4]
-    sortie = one["enregistrer_dire"]("spk-01", "", sortie[2], None, False, "", "")
+    sortie = one["enregistrer_dire"]("spk-01", "", "ami", sortie[2], None, False, "", "")
     assert "Rien d'enregistré" in sortie[0]
-    assert one["annuler_dire"]("spk-01", "")[2]["id"] == "sal-01"
+    annule = one["annuler_dire"]("spk-01", "", "ami")
+    assert annule[2]["id"] == "sal-01" and annule[8] == "ami"
+
+    # La même phrase à un ami, puis à un inconnu (vouvoyée), deux fois.
+    sortie = one["enregistrer_autre_personne"]("spk-01", "", "ami", phrase, _voix(), False,
+                                               "", "")
+    assert sortie[2]["id"] == "sal-01" and sortie[8] == "inconnu"
+    assert "allez-vous" in sortie[3] and "déjà dite : à un ami" in sortie[3]
+    sortie = one["enregistrer_autre_facon"]("spk-01", "", "inconnu", phrase, _voix(), False,
+                                            "", "")
+    assert sortie[2]["id"] == "sal-01" and sortie[8] == "inconnu"
+    sortie = one["enregistrer_autre_personne"]("spk-01", "", "inconnu", phrase, _voix(),
+                                               False, "", "")
+    assert sortie[8] == "aine" and "à un inconnu (2 fois)" in sortie[3]
+    # Revenir à « un ami » : sal-01 lui est déjà dite, on passe à la suivante.
+    assert one["changer_qui"]("spk-01", "", "ami", phrase)[0]["id"] == "sal-02"
+    assert one["changer_qui"]("spk-01", "", "aine", phrase)[0]["id"] == "sal-01"
 
     # Jugement : un lot, puis le bouton « B ».
     res = tmp_path / "res"
@@ -238,10 +299,9 @@ def test_application(tmp_path):
 
     assert "✅" in one["ajouter_mot"]("spk-01", "wai", "salut", "", "argot", "")[0]
     bilan = one["bilan_markdown"]()
-    # La seule prise a été annulée.
-    assert "| spk-01 (f) | 0/300 |" in bilan and "lot" in bilan and "1 mot" in bilan
+    assert "| spk-01 (f) | 1 · 2 · 0 |" in bilan and "lot" in bilan and "1 mot" in bilan
     assert "testset-dire.jsonl" in one["exporter"]()
-    assert len(one["tout_rafraichir"]("spk-01", "", "lot")) == 13
+    assert len(one["tout_rafraichir"]("spk-01", "", "ami", "lot")) == 13
 
 
 # --- notebook Colab -----------------------------------------------------------

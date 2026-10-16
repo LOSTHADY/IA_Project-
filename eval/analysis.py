@@ -14,8 +14,9 @@ sorties ligne à ligne (`.details.jsonl`) :
   trop longues ; phrases recopiées sans être traduites.
 - **Exemples** : meilleur, médian et pire énoncé, pour illustrer le mémoire.
 - **Sous-groupes** (jeu maison, eval.run_eval) : WER et chrF++ par registre
-  (lu / spontané), code-switching, conditions d'enregistrement, genre et
-  locuteur. Descriptif seulement : deux groupes n'ont ni les mêmes énoncés ni
+  (lu / spontané / dit), interlocuteur (ami / inconnu / personne âgée, pour
+  les énoncés de l'atelier), code-switching, conditions d'enregistrement,
+  genre et locuteur. Descriptif seulement : deux groupes n'ont ni les mêmes énoncés ni
   les mêmes voix, leur écart n'est pas un test.
 
 Tout est calculé au niveau du corpus, comme les scores, et dans la même
@@ -38,8 +39,9 @@ from .significance import chrf_stats, corpus_score, wer_stats
 LENGTH_BUCKETS = ((1, 3), (4, 7), (8, 15), (16, 10_000))
 HALLUCINATION_RATIO = 2.0   # sortie au moins deux fois plus longue que la référence
 # Champs du jeu de test (eval.dataset) par lesquels découper les scores.
-GROUPS = (("register", "registre"), ("code_switching", "code-switching"),
-          ("conditions", "conditions"), ("gender", "genre"), ("speaker", "locuteur"))
+GROUPS = (("register", "registre"), ("interlocuteur", "interlocuteur"),
+          ("code_switching", "code-switching"), ("conditions", "conditions"),
+          ("gender", "genre"), ("speaker", "locuteur"))
 
 
 def _strict(text: str) -> str:

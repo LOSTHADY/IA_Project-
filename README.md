@@ -95,7 +95,8 @@ python app/atelier_app.py --share          # ou notebooks/atelier_collecte.ipynb
 ```
 
 Pour les contributeurs qui parlent le bambara sans l'écrire : **dire** en
-bambara 300 phrases françaises (12 rubriques), **lire** des phrases bambara
+bambara 300 phrases françaises (12 rubriques), à un ami, à un inconnu ou à
+une personne âgée, en autant de versions qu'on veut, **lire** des phrases bambara
 écrites, **juger** à l'aveugle deux traductions, noter l'**argot**. Le jeu
 « dit » se passe de transcription : il mesure la compréhension depuis
 l'audio, la comparaison centrale, sur de la parole réelle. Mode d'emploi :

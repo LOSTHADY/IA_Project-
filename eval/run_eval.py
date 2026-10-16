@@ -76,7 +76,9 @@ def evaluate(
                      # scores par sous-groupe (eval.analysis).
                      "speaker": item.speaker, "gender": item.gender,
                      "register": item.register, "code_switching": item.code_switching,
-                     "conditions": item.extra.get("conditions", "")})
+                     "conditions": item.extra.get("conditions", ""),
+                     # À qui l'énoncé était dit (atelier) : ami, inconnu, aîné.
+                     "interlocuteur": item.extra.get("interlocuteur", "")})
         logger.info("[%d/%d] %s — RTF %.2f", idx, len(items), item.id, trace.rtf)
 
     if not traces:

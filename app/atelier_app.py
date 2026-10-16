@@ -24,19 +24,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eval.atelier import (  # noqa: E402
-    LECTURE_CIBLE_MIN, PHRASES_A_DIRE, TYPES_LEXIQUE, Atelier,
-    charger_phrases_a_dire, rubriques,
+    INTERLOCUTEURS, LECTURE_CIBLE_MIN, PHRASES_A_DIRE, TYPES_LEXIQUE, Atelier,
+    charger_phrases_a_dire, rubriques, texte_fr,
 )
 from eval.collection import CONDITIONS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
 AIDE_DIRE = """\
-**Comment faire.** Lis la phrase française, puis dis-la **en bambara, comme tu
-la dirais à un ami** : avec tes mots, pas mot à mot. Si tu mélanges avec du
-français ou de l'anglais, c'est très bien : coche la case. Appuie sur le micro,
-parle, arrête, écoute si tu veux, puis « Enregistrer et suivante ».
-Une phrase qui ne te parle pas : « Passer »."""
+**Comment faire.** Choisis **à qui tu parles** (un ami, un inconnu, une personne
+âgée), lis la phrase française, puis dis-la **en bambara, comme tu la lui
+dirais** : avec tes mots, pas mot à mot. Si tu mélanges avec du français ou de
+l'anglais, c'est très bien : coche la case. Appuie sur le micro, parle, arrête,
+écoute si tu veux, puis « Enregistrer et suivante ».
+
+**Plusieurs versions sont les bienvenues** : « Une autre façon » si tu la dirais
+aussi autrement à la même personne, « À quelqu'un d'autre » pour la redire à
+un inconnu ou à une personne âgée. Une phrase qui ne te parle pas : « Passer »."""
 
 AIDE_LIRE = """\
 **Comment faire.** Lis la phrase bambara **à voix haute, naturellement**, au
@@ -104,75 +108,127 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
 
     # --- dire ------------------------------------------------------------------
 
-    def rubriques_dd(spk):
-        prog = {r["rubrique"]: r for r in atelier.progression("dire", spk, phrases_dire)} \
-            if spk else {}
+    def rubriques_dd(spk, qui="ami"):
+        prog = {r["rubrique"]: r for r in atelier.progression("dire", spk, phrases_dire,
+                                                              qui or "ami")} if spk else {}
         choix = [("Toutes, dans l'ordre", "")]
         for rid, titre in titres.items():
             r = prog.get(rid)
             choix.append((f"{titre} — {r['faites']}/{r['total']}" if r else titre, rid))
         return choix
 
-    def progression_dire(spk, courante=None):
-        """Le total et la rubrique en cours ; le détail, repliable."""
+    def progression_dire(spk, qui="ami", courante=None):
+        """Pour l'interlocuteur choisi : le total et la rubrique en cours ; le
+        détail, repliable ; et les prises de toutes les versions."""
         if not spk:
             return ""
-        prog = atelier.progression("dire", spk, phrases_dire)
+        prog = atelier.progression("dire", spk, phrases_dire, qui)
         total = sum(r["total"] for r in prog)
         faites = sum(r["faites"] for r in prog)
-        lignes = [barre(faites, total, "Au total :")]
+        lignes = [barre(faites, total, f"À {INTERLOCUTEURS[qui]}, au total :")]
         lignes += [barre(r["faites"], r["total"], r["titre"] + " :")
                    for r in prog if r["rubrique"] == courante]
+        par_qui = atelier.par_interlocuteur(spk)
+        toutes = " · ".join(f"à {INTERLOCUTEURS[i]} : {n}" for i, n in par_qui.items())
+        lignes.append(f'<div style="font-size:0.9em;margin-top:4px">Toutes tes prises : '
+                      f'{html.escape(toutes)}</div>')
         detail = "".join(barre(r["faites"], r["total"], r["titre"]) for r in prog)
-        lignes.append(f'<details style="margin-top:6px"><summary>Progression par rubrique'
-                      f'</summary>{detail}</details>')
+        lignes.append(f'<details style="margin-top:6px"><summary>Progression par rubrique '
+                      f'(à {html.escape(INTERLOCUTEURS[qui])})</summary>{detail}</details>')
         return "".join(lignes)
 
-    def montrer_dire(spk, rubrique):
+    def montrer_dire(spk, rubrique, qui="ami", courante=None, forcer=False):
+        """La phrase en cours si elle reste à dire à cet interlocuteur (ou si
+        `forcer` : une autre façon de la dire), sinon la suivante."""
+        qui = qui or "ami"
         if not spk:
             return None, "_Choisis d'abord qui tu es, en haut de la page._", ""
-        p = atelier.prochaine("dire", spk, phrases_dire, rubrique or None)
+        p = None
+        if courante and (forcer or not atelier.deja_faite("dire", spk, courante["id"], qui)):
+            p = courante
+        if p is None:
+            p = atelier.prochaine("dire", spk, phrases_dire, rubrique or None, qui)
         if p is None:
             fin = "cette rubrique" if rubrique else "toutes les phrases"
-            return None, f"🎉 Tu as terminé {fin}. Merci ! Choisis une autre rubrique.", \
-                progression_dire(spk)
+            return (None, f"🎉 Tu as terminé {fin} pour {INTERLOCUTEURS[qui]}. Merci ! "
+                          f"Choisis une autre rubrique, ou une autre personne.",
+                    progression_dire(spk, qui))
         rang = [q["id"] for q in phrases_dire if q["rubrique"] == p["rubrique"]].index(p["id"]) + 1
         n = sum(q["rubrique"] == p["rubrique"] for q in phrases_dire)
-        texte = citation(p["fr"], f"{p['titre']} · phrase {rang} sur {n} · à dire en bambara")
-        return p, texte, progression_dire(spk, p["rubrique"])
+        legende = f"{p['titre']} · phrase {rang} sur {n} · à dire en bambara à {INTERLOCUTEURS[qui]}"
+        deja = atelier.versions(spk, p["id"])
+        if deja:
+            legende += " · déjà dite : " + ", ".join(
+                f"à {INTERLOCUTEURS[i]}" + (f" ({k} fois)" if k > 1 else "")
+                for i, k in deja.items())
+        return p, citation(texte_fr(p, qui), legende), progression_dire(spk, qui, p["rubrique"])
 
-    def apres_dire(spk, rubrique, msg):
-        p, texte, prog = montrer_dire(spk, rubrique)
+    def changer_qui(spk, rubrique, qui, courante):
+        """Changer de personne garde la phrase en cours, si elle lui reste à dire."""
+        return (*montrer_dire(spk, rubrique, qui, courante),
+                gr.Dropdown(choices=rubriques_dd(spk, qui), value=rubrique))
+
+    def apres_dire(spk, rubrique, qui, msg, garder=None):
+        p, texte, prog = montrer_dire(spk, rubrique, qui, garder, forcer=garder is not None)
         return (msg, None, p, texte, prog,
-                gr.Dropdown(choices=rubriques_dd(spk), value=rubrique), False, "")
+                gr.Dropdown(choices=rubriques_dd(spk, qui), value=rubrique), False, "", qui)
 
-    def enregistrer_dire(spk, rubrique, phrase, audio, cs, argot, conditions):
+    def _enregistrer_dire(spk, rubrique, qui, phrase, audio, cs, argot, conditions, suite):
+        qui = qui or "ami"
         if not spk or not phrase:
-            return apres_dire(spk, rubrique, "⚠️ Choisis qui tu es, puis une phrase.")
+            return apres_dire(spk, rubrique, qui, "⚠️ Choisis qui tu es, puis une phrase.")
         if audio is None:
             return (("⚠️ Rien d'enregistré : appuie sur le micro, parle, puis arrête.",)
-                    + (gr.update(),) * 7)
+                    + (gr.update(),) * 8)
         sr, data = audio
         try:
             prise, problemes = atelier.enregistrer("dire", spk, phrase, data, sr, cs, argot,
-                                                   conditions)
+                                                   conditions, qui)
         except ValueError as exc:
-            return (f"⚠️ {exc}.",) + (gr.update(),) * 7
-        msg = f"✅ Enregistré ({prise.duration_s:.1f} s)."
+            return (f"⚠️ {exc}.",) + (gr.update(),) * 8
+        msg = f"✅ Enregistré ({prise.duration_s:.1f} s, à {INTERLOCUTEURS[qui]})."
         if problemes:
             msg += " ⚠️ " + " ; ".join(problemes) + " — « Annuler la dernière » pour recommencer."
-        return apres_dire(spk, rubrique, msg)
+        if suite == "autre_facon":
+            return apres_dire(spk, rubrique, qui, msg + " Dis-la maintenant d'une autre façon.",
+                              garder=phrase)
+        if suite == "autre_personne":
+            autre = atelier.autre_interlocuteur(spk, phrase["id"], qui)
+            if autre:
+                return apres_dire(spk, rubrique, autre,
+                                  msg + f" Maintenant, dis-la à {INTERLOCUTEURS[autre]}.",
+                                  garder=phrase)
+            msg += " Elle est dite à tout le monde : phrase suivante."
+        return apres_dire(spk, rubrique, qui, msg)
 
-    def passer_dire(spk, rubrique, phrase):
+    def enregistrer_dire(spk, rubrique, qui, phrase, audio, cs, argot, conditions):
+        return _enregistrer_dire(spk, rubrique, qui, phrase, audio, cs, argot, conditions,
+                                 "suivante")
+
+    def enregistrer_autre_facon(spk, rubrique, qui, phrase, audio, cs, argot, conditions):
+        return _enregistrer_dire(spk, rubrique, qui, phrase, audio, cs, argot, conditions,
+                                 "autre_facon")
+
+    def enregistrer_autre_personne(spk, rubrique, qui, phrase, audio, cs, argot, conditions):
+        return _enregistrer_dire(spk, rubrique, qui, phrase, audio, cs, argot, conditions,
+                                 "autre_personne")
+
+    def passer_dire(spk, rubrique, qui, phrase):
+        qui = qui or "ami"
         if spk and phrase:
-            atelier.passer("dire", spk, phrase["id"])
-        return apres_dire(spk, rubrique, "⏭️ Phrase passée.")
+            atelier.passer("dire", spk, phrase["id"], qui)
+        return apres_dire(spk, rubrique, qui, f"⏭️ Phrase passée (pour {INTERLOCUTEURS[qui]}).")
 
-    def annuler_dire(spk, rubrique):
+    def annuler_dire(spk, rubrique, qui):
         prise = atelier.annuler_derniere("dire", spk) if spk else None
-        msg = (f"↩️ Dernière prise supprimée : « {prise.texte} » revient."
-               if prise else "Rien à annuler.")
-        return apres_dire(spk, rubrique, msg)
+        if prise is None:
+            return apres_dire(spk, rubrique, qui or "ami", "Rien à annuler.")
+        # La phrase annulée revient, avec la personne à qui elle était dite.
+        phrase = next((p for p in phrases_dire if p["id"] == prise.prompt_id), None)
+        qui = prise.interlocuteur or "ami"
+        return apres_dire(spk, rubrique, qui,
+                          f"↩️ Dernière prise supprimée : « {prise.texte} » revient.",
+                          garder=phrase)
 
     # --- lire ------------------------------------------------------------------
 
@@ -282,15 +338,20 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
 
     def bilan_markdown():
         b = atelier.bilan(phrases_dire)
+        qui = " · ".join(INTERLOCUTEURS.values())
         lignes = ["### Contributeurs", "",
-                  "| Contributeur | Phrases dites | Phrases lues | Minutes lues | Jugements |",
-                  "|---|---|---|---|---|"]
+                  f"| Contributeur | Prises dites ({qui}) | Phrases lues | Minutes lues "
+                  f"| Jugements |", "|---|---|---|---|---|"]
         for r in b["locuteurs"]:
-            lignes.append(f"| {r['locuteur']} ({r['genre']}) | {r['dites']}/{r['a_dire']} | "
+            dites = " · ".join(str(n) for n in r["par_interlocuteur"].values())
+            lignes.append(f"| {r['locuteur']} ({r['genre']}) | {dites} | "
                           f"{r['lues']} | {r['minutes_lues']} | {r['jugements']} |")
         if not b["locuteurs"]:
             lignes.append("| — | | | | |")
-        lignes += ["", f"**Voix enregistrée** : {b['minutes']['dire']} min dites, "
+        versions = " · ".join(f"à {INTERLOCUTEURS[i]} : {n}"
+                              for i, n in b["par_interlocuteur"].items())
+        lignes += ["", f"**Prises dites** : {versions}", "",
+                   f"**Voix enregistrée** : {b['minutes']['dire']} min dites, "
                        f"{b['minutes']['lire']} min lues · **lexique** : {b['lexique']} mots · "
                        f"**phrases à lire disponibles** : {b['phrases_a_lire']}", ""]
         if b["lots"]:
@@ -340,7 +401,11 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
 
         with gr.Tab("🗣️ Dire") as tab_dire:
             gr.Markdown(AIDE_DIRE)
-            rubrique = gr.Dropdown(rubriques_dd(None), value="", label="Rubrique")
+            with gr.Row():
+                a_qui = gr.Radio([(label, cle) for cle, label in INTERLOCUTEURS.items()],
+                                 value="ami", label="À qui tu le dis ?", min_width=260)
+                rubrique = gr.Dropdown(rubriques_dd(None), value="", label="Rubrique",
+                                       min_width=200)
             phrase_dire = gr.State(None)
             texte_dire = gr.Markdown("_Choisis d'abord qui tu es, en haut de la page._")
             micro_dire = gr.Audio(sources=["microphone"], type="numpy", label="Ta voix")
@@ -348,8 +413,11 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
                 cs = gr.Checkbox(label="J'ai mélangé avec du français ou de l'anglais")
                 argot = gr.Textbox(label="Mots familiers employés (facultatif)",
                                    placeholder="ex. wai")
+            ok_dire = gr.Button("✅ Enregistrer et suivante", variant="primary")
             with gr.Row():
-                ok_dire = gr.Button("✅ Enregistrer et suivante", variant="primary")
+                autre_facon = gr.Button("➕ Enregistrer, puis une autre façon de la dire")
+                autre_personne = gr.Button("🔁 Enregistrer, puis la dire à quelqu'un d'autre")
+            with gr.Row():
                 passer_d = gr.Button("⏭️ Passer")
                 annuler_d = gr.Button("↩️ Annuler la dernière")
             msg_dire = gr.Markdown()
@@ -415,13 +483,16 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
                        [inscription_msg, spk])
 
         sorties_dire = [msg_dire, micro_dire, phrase_dire, texte_dire, prog_dire, rubrique,
-                        cs, argot]
-        ok_dire.click(enregistrer_dire,
-                      [spk, rubrique, phrase_dire, micro_dire, cs, argot, conditions],
-                      sorties_dire)
-        passer_d.click(passer_dire, [spk, rubrique, phrase_dire], sorties_dire)
-        annuler_d.click(annuler_dire, [spk, rubrique], sorties_dire)
-        rubrique.input(montrer_dire, [spk, rubrique], [phrase_dire, texte_dire, prog_dire])
+                        cs, argot, a_qui]
+        entrees_dire = [spk, rubrique, a_qui, phrase_dire, micro_dire, cs, argot, conditions]
+        ok_dire.click(enregistrer_dire, entrees_dire, sorties_dire)
+        autre_facon.click(enregistrer_autre_facon, entrees_dire, sorties_dire)
+        autre_personne.click(enregistrer_autre_personne, entrees_dire, sorties_dire)
+        passer_d.click(passer_dire, [spk, rubrique, a_qui, phrase_dire], sorties_dire)
+        annuler_d.click(annuler_dire, [spk, rubrique, a_qui], sorties_dire)
+        rubrique.input(montrer_dire, [spk, rubrique, a_qui], [phrase_dire, texte_dire, prog_dire])
+        a_qui.input(changer_qui, [spk, rubrique, a_qui, phrase_dire],
+                    [phrase_dire, texte_dire, prog_dire, rubrique])
 
         sorties_lire = [msg_lire, micro_lire, phrase_lire, texte_lire, prog_lire]
         ok_lire.click(enregistrer_lire, [spk, phrase_lire, micro_lire, conditions],
@@ -445,16 +516,16 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
 
         # Changer de contributeur, ou revenir sur un onglet, remet chaque mode
         # à sa prochaine phrase : les autres contributeurs avancent aussi.
-        def tout_rafraichir(s, r, l):
-            return (*montrer_dire(s, r), gr.Dropdown(choices=rubriques_dd(s), value=r),
+        def tout_rafraichir(s, r, q, l):
+            return (*montrer_dire(s, r, q), gr.Dropdown(choices=rubriques_dd(s, q), value=r),
                     *montrer_lire(s)[:3], gr.Dropdown(choices=choix_lots(s), value=l),
                     *montrer_item(s, l))
 
         tout = [phrase_dire, texte_dire, prog_dire, rubrique, phrase_lire, texte_lire,
                 prog_lire, lot, item, source, cand_a, cand_b, prog_juger]
-        spk.input(tout_rafraichir, [spk, rubrique, lot], tout)
+        spk.input(tout_rafraichir, [spk, rubrique, a_qui, lot], tout)
         for tab in (tab_dire, tab_lire, tab_juger):
-            tab.select(tout_rafraichir, [spk, rubrique, lot], tout)
+            tab.select(tout_rafraichir, [spk, rubrique, a_qui, lot], tout)
         tab_lexique.select(table_lexique, None, table)
         tab_bilan.select(bilan_markdown, None, bilan)
         demo.load(lambda: gr.Dropdown(choices=choix_locuteurs()), None, spk)

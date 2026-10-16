@@ -5,7 +5,7 @@ ce que chaque donnée apporte à chaque maillon de l'assistant.
 
 | Onglet | Geste | Maillon servi | Ce qu'on obtient |
 |---|---|---|---|
-| 🗣️ Dire | lire une phrase française, la dire en bambara comme on parle | **toute la chaîne** (évaluation) | un jeu de test maison : chrF++ du français compris depuis l'audio, cascade contre bout-en-bout, IC par locuteur |
+| 🗣️ Dire | lire une phrase française, la dire en bambara comme on parle, à un ami, à un inconnu ou à une personne âgée | **toute la chaîne** (évaluation) | un jeu de test maison : chrF++ du français compris depuis l'audio, cascade contre bout-en-bout, IC par locuteur |
 | 📖 Lire | lire à voix haute une phrase bambara déjà écrite | synthèse vocale, reconnaissance | audio + texte exact, sans transcrire |
 | ⚖️ Juger | choisir la meilleure de deux traductions, à l'aveugle | traduction, chaîne complète | une évaluation humaine, avec un test du signe |
 | 📚 Lexique | noter un mot d'argot ou un emprunt et son sens | entrée de la traduction | une table de normalisation (*wai* → salut) |
@@ -60,13 +60,42 @@ lui-même : un téléphone passe par le lien `--share`, pas par l'adresse
    et garder les formulaires à part.
 2. Choisir son pseudonyme dans **Qui es-tu ?**, et l'endroit dans **Où
    enregistres-tu ?** (salle calme, rue, voiture…).
-3. **Dire** : choisir une rubrique, ou les faire dans l'ordre. Micro, parler,
-   arrêter, **Enregistrer et suivante**. Une phrase qui ne parle pas :
+3. **Dire** : choisir **à qui l'on parle** (un ami, un inconnu, une
+   personne âgée), puis une rubrique, ou les faire dans l'ordre. Micro,
+   parler, arrêter, **Enregistrer et suivante**. Une phrase qui ne parle pas :
    **Passer**. Une erreur : **Annuler la dernière** (la phrase revient).
 4. **Lire**, **Juger**, **Lexique**, dans l'ordre qu'on veut.
 
-Les barres de progression suivent chacun : au total, par rubrique, en
-minutes lues, en paires jugées. **Bilan** montre l'ensemble.
+Les barres de progression suivent chacun : au total et par rubrique pour
+l'interlocuteur choisi, en minutes lues, en paires jugées. **Bilan** montre
+l'ensemble.
+
+### Plusieurs versions d'une même phrase
+
+« Bonjour, comment vas-tu ? » ne se dit pas pareil à un pote, à un inconnu
+ou à un aîné : formules de respect, argot, mélange avec le français. Toutes
+ces versions sont utiles, et l'atelier les garde à part :
+
+- **À qui tu le dis ?** : chaque phrase peut se dire aux trois. La file et la
+  progression sont propres à chacun : « À un ami : 120/300 », « À une
+  personne âgée : 30/300 ». Un contributeur peut faire toute une séance
+  « entre amis », puis une autre « avec les aînés ».
+- La phrase française suit : tutoyée pour un ami, **vouvoyée** pour un
+  inconnu ou une personne âgée (« comment allez-vous ? »). C'est la
+  référence de l'évaluation, qui doit dire la même chose que l'audio. Les
+  70 phrases qui s'adressent à quelqu'un ont leur forme « vous » ; les
+  autres (« Il pleut depuis le matin ») ne changent pas, seule la façon de
+  les dire change.
+- **🔁 Enregistrer, puis la dire à quelqu'un d'autre** : on reste sur la
+  phrase, l'interlocuteur passe au suivant (ami → inconnu → personne âgée).
+  Idéal pour les salutations et la politesse.
+- **➕ Enregistrer, puis une autre façon de la dire** : même phrase, même
+  personne, une autre formulation (« wai, i bɛ di ? » puis « i ni sɔgɔma,
+  i ka kɛnɛ wa ? »).
+
+À l'évaluation, `eval.analysis` donne le chrF++ par interlocuteur :
+l'assistant comprend-il aussi bien ce qu'on dit à un aîné que ce qu'on dit à
+un pote ?
 
 ### Les 300 phrases à dire
 
@@ -79,8 +108,9 @@ déplacements et directions · école et travail · téléphone, internet et
 argent mobile · nourriture et cuisine · demandes à l'assistant · loisirs,
 jeunes et vie quotidienne.
 
-Une rubrique se modifie dans ce fichier ; les prises déjà faites gardent
-leur phrase.
+Une phrase y est une chaîne, ou `{"fr": …, "vous": …}` quand elle
+s'adresse à quelqu'un. Une rubrique se modifie dans ce fichier ; les prises
+déjà faites gardent leur phrase.
 
 ### Conseils de prise de son
 
