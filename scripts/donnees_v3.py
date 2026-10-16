@@ -8,7 +8,8 @@ Trois sources, téléchargées depuis GitHub (docs/RECHERCHE.md) :
   dictionnaire, des phrases courtes et souvent orales (« dàba d'á mà ! » →
   « donne-lui la houe ! »). Tons retirés, renvois et commentaires en
   parenthèses retirés du français, exemples inachevés (« ... ») écartés.
-  **Aucune licence** : usage de recherche, ne pas redistribuer ;
+  Licence CC BY-NC-SA 3.0 France (page officielle du Bamadaba ; le dépôt
+  GitHub n'a pas de fichier de licence) : pas d'usage commercial ;
 - **GATITOS** (Google, CC-BY-4.0) : environ 4 000 mots et formules, bambara
   et français joints par leur clé anglaise (« a' ni sɔgɔma » → « bonjour »).
   Quelques paires sont fausses (« i danse » → « accueillir ») : elles pèsent
