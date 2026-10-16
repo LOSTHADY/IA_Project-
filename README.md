@@ -233,6 +233,7 @@ docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 docs/ATELIER.md    atelier de données : dire, lire, juger, lexique
 docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
 docs/RESULTATS.md  chiffres mesurés, phase par phase
+docs/RECHERCHE.md  ressources, modèles et techniques pour la suite (dictionnaires, corpus, plan)
 data/templates.json  banque de gabarits (à remplir)
 data/testset/      jeu de test (à collecter — chemin critique), consignes
 ```

@@ -47,3 +47,7 @@ outputs/
 
 .DS_Store
 .env
+
+# Dossiers de travail de la recherche (copiés dans docs/RECHERCHE.md et docs/recherche-notes/)
+research_notes/
+reports/
