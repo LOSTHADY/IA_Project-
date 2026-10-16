@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from eval import mos, significance  # noqa: E402
 from eval.metrics import score_asr, score_mt  # noqa: E402
 from eval.significance import (  # noqa: E402
-    Series, bootstrap, chrf_stats, corpus_score, load_series, wer_stats,
+    Series, bootstrap, chrf_stats, corpus_score, load_series, to_markdown, wer_stats,
 )
 
 HYPS = ["i ni ce, n be taa.", "a bɛ yen", "", "sugu ka jan"]
@@ -129,6 +129,23 @@ def test_tirage_par_locuteur_exige_des_locuteurs_coherents():
         bootstrap([voices, shuffled], n_boot=10, unit="locuteur")
     with pytest.raises(ValueError, match="unité inconnue"):
         bootstrap([voices], n_boot=10, unit="phrase")
+
+
+def test_un_seul_locuteur_tire_les_enonces():
+    """Jeu maison d'un seul contributeur : tirer « les locuteurs » reprendrait
+    toujours le même, avec un IC nul et un écart toujours « établi »."""
+    voices = _voices(n_speakers=1, per_speaker=40)
+    rng = np.random.default_rng(0)
+    noisy = Series("WER strict", "wer", voices.ids,
+                   np.column_stack([rng.integers(0, 6, 40), np.full(40, 10)]).astype(float),
+                   voices.speakers)
+    res = bootstrap([voices, noisy], n_boot=300)
+    assert res["unite"] == "enonce" and res["un_seul_locuteur"] and res["n_unites"] == 40
+    assert _width(res["systemes"][1]) > 0
+    with pytest.raises(ValueError, match="un seul locuteur"):
+        bootstrap([voices], n_boot=10, unit="locuteur")
+    md = to_markdown(["a", "b"], {"WER strict": res})
+    assert "**Un seul locuteur**" in md and "en tirant les énoncés" in md
 
 
 # --- lecture des rapports -----------------------------------------------------

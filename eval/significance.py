@@ -194,9 +194,14 @@ def _check_same_items(systems: list[Series], common: list[str]) -> None:
 
 
 def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np.ndarray]:
-    """Unité de tirage effective, et l'unité de chaque énoncé commun."""
+    """Unité de tirage effective, et l'unité de chaque énoncé commun.
+
+    Un seul locuteur ne se tire pas : chaque tirage le reprendrait tel quel,
+    et l'IC serait nul (n'importe quel écart paraîtrait établi). `auto` tire
+    alors les énoncés ; `locuteur` est refusé."""
     speakers = systems[0].speakers
-    if unit == "auto":
+    auto = unit == "auto"
+    if auto:
         unit = "locuteur" if all(s.speakers for s in systems) else "enonce"
     if unit == "enonce":
         return unit, np.arange(len(common))
@@ -209,6 +214,11 @@ def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np
         if any(other.get(i, by_id[i]) != by_id[i] for i in common):
             raise ValueError(f"« {s.label} » n'attribue pas les énoncés aux mêmes locuteurs")
     labels = sorted({by_id[i] for i in common})
+    if len(labels) < 2:
+        if auto:
+            return "enonce_un_locuteur", np.arange(len(common))
+        raise ValueError("un seul locuteur : impossible de tirer les locuteurs "
+                         "(--unite enonce, et l'IC ne vaut que pour cette voix)")
     index = {spk: k for k, spk in enumerate(labels)}
     return unit, np.array([index[by_id[i]] for i in common])
 
@@ -226,6 +236,8 @@ def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
     _check_same_items(systems, common)
     positions = [np.array([s.ids.index(i) for i in common]) for s in systems]
     unit, unit_of = _units(systems, common, unit)
+    un_locuteur = unit == "enonce_un_locuteur"
+    unit = "enonce" if un_locuteur else unit
     n_units = int(unit_of.max()) + 1
 
     # Statistiques additives : celles d'un locuteur sont la somme de celles de
@@ -243,6 +255,8 @@ def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
     observed = [s.score(agg.sum(axis=0)) for s, agg in zip(systems, per_unit)]
     out = {"n": len(common), "n_boot": n_boot, "unite": unit, "n_unites": n_units,
            "systemes": []}
+    if un_locuteur:
+        out["un_seul_locuteur"] = True
     for i, s in enumerate(systems):
         entry = {"score": observed[i], "ic": _percentiles(boots[i], alpha)}
         if i > 0:
@@ -292,6 +306,9 @@ def to_markdown(names: list[str], results: dict[str, dict], alpha: float = 0.05)
                      f"(trop étroits).**")
     else:
         text += ", en tirant les énoncés)."
+        if res.get("un_seul_locuteur"):
+            text += (" **Un seul locuteur** : ces intervalles valent pour sa voix, pas pour "
+                     "les locuteurs du bambara en général.")
     if len(names) > 1:
         text += (f" Écarts mesurés par rapport à « {names[0]} », sur les mêmes énoncés ; "
                  f"n.s. : l'IC de l'écart contient zéro.")
