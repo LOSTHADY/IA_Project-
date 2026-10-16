@@ -17,6 +17,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterator, TypeVar
 
 import numpy as np
@@ -125,6 +126,25 @@ def with_retries(fn: Callable[[], T], what: str, attempts: int = 6,
     raise AssertionError("inatteignable")
 
 
+_LOCAL_SPLITS = {"train": "train", "validation": "validation", "valid": "validation",
+                 "dev": "validation", "test": "test"}
+
+
+def local_files(dataset_id: str) -> dict[str, str] | None:
+    """Un jeu sur disque plutôt que sur le Hub : un fichier JSON (Lines), lu
+    comme partition train, ou un dossier de fichiers train / validation (ou
+    dev) / test en .json ou .jsonl — le format de MAFAND-MT comme celui de
+    scripts/donnees_v3.py. None si ce n'est pas un chemin existant."""
+    path = Path(dataset_id)
+    if path.is_file():
+        return {"train": str(path)}
+    if path.is_dir():
+        files = {_LOCAL_SPLITS[f.name.split(".")[0]]: str(f) for f in sorted(path.iterdir())
+                 if f.suffix in (".json", ".jsonl") and f.name.split(".")[0] in _LOCAL_SPLITS}
+        return files or None
+    return None
+
+
 def load_split(dataset_id: str, split: str | None = None, config: str | None = None,
                revision: str | None = None):
     """Charge une partition d'évaluation, avec deux replis :
@@ -135,6 +155,9 @@ def load_split(dataset_id: str, split: str | None = None, config: str | None = N
     """
     from datasets import get_dataset_split_names
 
+    local = local_files(dataset_id)
+    if split is None and local:
+        split = next((s for s in EVAL_SPLITS if s in local), "train")
     if split is None:
         try:
             names = with_retries(
@@ -153,6 +176,10 @@ def load_any(dataset_id: str, config: str | None = None, **kwargs):
     parquet du Hub pour les jeux à script (refusés depuis datasets 4)."""
     from datasets import load_dataset
 
+    local = local_files(dataset_id)
+    if local:
+        kwargs.pop("revision", None)
+        return load_dataset("json", data_files=local, **kwargs)
     try:
         return with_retries(lambda: load_dataset(dataset_id, config, **kwargs), dataset_id)
     except Exception as exc:

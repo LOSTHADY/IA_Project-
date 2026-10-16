@@ -233,6 +233,11 @@ def test_exports_et_jeu_de_test_sans_transcription(atelier):
     assert [i.translation_fr for i in items] == [p["fr"] for p in PHRASES[:3]] + [
         "Bonjour, comment allez-vous ce matin ?"]
     assert [i.extra["interlocuteur"] for i in items] == ["ami", "ami", "ami", "aine"]
+    # Partition fixée par la phrase : ses deux prises (ami, aîné) du même côté.
+    from eval.atelier import partition
+    assert items[0].extra["prompt_id"] == "sal-01" == items[3].extra["prompt_id"]
+    assert items[0].extra["partition"] == items[3].extra["partition"] == partition("sal-01")
+    assert {partition(p["id"]) for p in PHRASES} == {"dev", "test"}
     assert items[0].transcript_bm == "" and items[0].register == "dit"
     assert items[0].audio_path(out["testset"].parent).exists()
     d = describe(items)
@@ -377,38 +382,142 @@ def _sans_shell(cellule: str) -> str:
     return "\n".join(lignes)
 
 
-def test_notebook_phase3_retient_l_assemblage_qui_comprend_le_mieux_ta_voix(tmp_path, capsys):
-    """§9a : quatre assemblages mesurés sur le jeu maison ; le meilleur chrF++
-    devient la configuration de la démo, pas « Soloni + v2 si entraînée »."""
-    [cellule] = [c for c in _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
-                 if c.startswith("import glob, json, os\nfrom pathlib import Path\nATELIER")]
-    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
-    (ckpt / "nllb-bm2fr-v2").mkdir(parents=True)
-    (ckpt / "nllb-bm2fr-v2" / "model.safetensors").write_bytes(b"")
-    moyenne = tmp_path / "nllb-bm2fr-moyenne"
-    atelier = tmp_path / "atelier"
-    atelier.mkdir()
-    (atelier / "dire.jsonl").write_text("{}\n")
-    chrf = {"Whisper-NLLB-v1": 31.0, "Whisper-NLLB-v2": 28.0, "Soloni-NLLB-v1": 24.0,
-            "Soloni-NLLB-v2": 26.7, "Whisper-NLLB-moyenne": 30.5, "Soloni-NLLB-moyenne": 25.0}
-    for cle, score in chrf.items():
-        d = out / "maison-assemblages" / cle
+PHRASES_MAISON = [f"il va au marché acheter {k} poissons ce matin" for k in range(40)]
+
+
+def _rapport_maison(dossier: Path, juste: dict[str, float]) -> None:
+    """Rapport eval.run_eval sur 80 énoncés (40 dev, 40 test) ; `juste` : part
+    d'énoncés bien compris dans chaque partition."""
+    dossier.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for i in range(80):
+        part = "dev" if i < 40 else "test"
+        ref = PHRASES_MAISON[i % 40]
+        ok = (i % 40) < juste[part] * 40
+        rows.append({"item": f"di-{i:05d}", "source_bm": "a bɛ taa", "partition": part,
+                     "source_fr": ref if ok else "il est parti hier",
+                     "ref_translation_fr": ref, "speaker": f"spk-0{i % 2}"})
+    path = dossier / "cascade-20261017-090000.json"
+    path.write_text(json.dumps({"nom": dossier.name}), encoding="utf-8")
+    path.with_suffix(".details.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+
+
+def test_notebook_phase3_ne_change_d_assemblage_que_s_il_fait_mieux(tmp_path, capsys):
+    """§9a : le meilleur sur le dev est le candidat ; il remplace l'assemblage
+    en service (Whisper + NLLB v1 au départ) seulement s'il fait mieux sur le
+    test. La décision va dans retenu.json, que lit la suite du notebook."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    cellules = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+    [aides] = [c for c in cellules if c.startswith("# Modèle final")]
+    [cellule] = [c for c in cellules
+                 if c.startswith("import glob, json, os\nfrom pathlib import Path\nfrom eval.promotion")]
+    out, ckpt, atelier = tmp_path / "out", tmp_path / "ckpt", tmp_path / "atelier"
+    for d in (ckpt / "nllb-bm2fr-v2", tmp_path / "moyenne", atelier):
         d.mkdir(parents=True)
-        (d / "cascade-20261017-090000.json").write_text(json.dumps(
-            {"nom": cle, "mt_in_depuis_asr": {"chrf": score}}))
-    code = _sans_shell(cellule.replace("/content/drive/MyDrive/bambara/atelier", str(atelier))
-                       .replace("/content/assemblage-", str(tmp_path / "assemblage-"))
-                       .replace("/content/nllb-bm2fr-moyenne", str(moyenne)))
-    cfg = tmp_path / "assistant.json"
-    ns = {"CKPT": str(ckpt), "OUT": str(out), "CFG": str(cfg), "WHISPER": "whisper",
-          "SOLONI": "soloni", "NLLB_BM2FR": "v2-par-defaut", "NLLB_FR2BM": "fr2bm",
-          "chemins": lambda: ("whisper", "nllb-v1", "fr2bm"), "a_jour": lambda *a, **k: True}
-    exec(code, ns)
-    assert ns["ASSEMBLAGE"] == "Whisper + NLLB v1" and ns["NLLB_BM2FR"] == "nllb-v1"
-    assert json.loads(cfg.read_text()) == {"device": "cuda", "asr": {"model_id": "whisper"},
-                                           "mt_in": {"model_id": "nllb-v1"},
-                                           "mt_out": {"model_id": "fr2bm"}}
+    (ckpt / "nllb-bm2fr-v2" / "model.safetensors").write_bytes(b"")
+    (tmp_path / "moyenne" / "model.safetensors").write_bytes(b"")
+    (atelier / "dire.jsonl").write_text("{}\n")
+
+    def run(scores):
+        for cle, juste in scores.items():
+            _rapport_maison(out / "maison-assemblages" / cle, juste)
+        ns = {"CKPT": str(ckpt), "OUT": str(out)}
+        exec(_sans_shell(aides), ns)
+        ns.update(chemins=lambda: ("whisper", "nllb-v1", "fr2bm-v1"),
+                  a_jour=lambda *a, **k: True, MOYENNE=str(tmp_path / "moyenne"),
+                  CFG=str(tmp_path / "assistant.json"), WHISPER="whisper", SOLONI="soloni",
+                  NLLB_FR2BM="fr2bm-v1")
+        exec(_sans_shell(cellule.replace("/content/drive/MyDrive/bambara/atelier", str(atelier))
+                         .replace("/content/assemblage-", str(tmp_path / "assemblage-"))), ns)
+        return ns, json.loads((tmp_path / "assistant.json").read_text())
+
+    egal = {"dev": 0.5, "test": 0.5}
+    # 1. Soloni + moyenne : meilleur sur le dev et sur le test → mis en service.
+    ns, cfg = run({"Whisper-NLLB-v1": egal, "Whisper-NLLB-v2": egal,
+                   "Whisper-NLLB-moyenne": egal, "Soloni-NLLB-v1": egal,
+                   "Soloni-NLLB-v2": {"dev": 0.6, "test": 0.5},
+                   "Soloni-NLLB-moyenne": {"dev": 0.8, "test": 0.8}})
     sortie = capsys.readouterr().out
-    assert sortie.index("Whisper + NLLB v1 : chrF++ 31.0") < sortie.index(
-        "Whisper + NLLB moyenne : chrF++ 30.5") < sortie.index("Soloni + NLLB v1")
-    assert set(ns["TRADUCTION"]) == {"NLLB v1", "NLLB v2", "NLLB moyenne"}
+    assert "Candidat (meilleur sur le dev) : Soloni + NLLB moyenne" in sortie
+    assert "**Promu" in sortie and "| Whisper + NLLB v1 (en service) | " in sortie
+    assert cfg == {"device": "cuda", "asr": {"model_id": "soloni", "kind": "nemo"},
+                   "mt_in": {"model_id": str(tmp_path / "moyenne")},
+                   "mt_out": {"model_id": "fr2bm-v1"}}
+    retenu = json.loads((ckpt / "retenu.json").read_text())
+    assert retenu["nom_bm2fr"] == "NLLB moyenne" and retenu["historique"][0]["promu"]
+
+    # 2. Whisper + v2 : bien meilleur sur le dev, pas sur le test → refusé.
+    ns, cfg = run({"Soloni-NLLB-moyenne": {"dev": 0.5, "test": 0.5},
+                   "Whisper-NLLB-v2": {"dev": 0.9, "test": 0.5}})
+    sortie = capsys.readouterr().out
+    assert "Candidat (meilleur sur le dev) : Whisper + NLLB v2" in sortie
+    assert "**Refusé : Soloni + NLLB moyenne reste en service.**" in sortie
+    assert cfg["asr"]["model_id"] == "soloni" and ns["EN_SERVICE"]["nom_bm2fr"] == "NLLB moyenne"
+    assert ns["RAPPORT_EN_SERVICE"].endswith("Soloni-NLLB-moyenne/cascade-20261017-090000.json")
+
+
+def _rapport_mt(dossier: Path, nom: str, juste: float) -> None:
+    dossier.mkdir(parents=True, exist_ok=True)
+    rows = [{"id": i, "ref_bm": "a bɛ taa", "hyp_bm": "a bɛ taa",
+             "ref_fr": PHRASES_MAISON[i % 40],
+             "hyp_fr": PHRASES_MAISON[i % 40] if i < juste * 60 else "rien"} for i in range(60)]
+    path = dossier / f"mt-{nom.replace(' ', '-')}.json"
+    path.write_text(json.dumps({"nom": nom, "maillon": "mt"}), encoding="utf-8")
+    path.with_suffix(".details.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+
+
+@pytest.mark.parametrize("bayelemabaga_v3, promu", [(0.8, True), (0.3, False)])
+def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
+                                                              bayelemabaga_v3, promu):
+    """§9c : dev maison transcrit pour choisir le checkpoint ; la v3 n'entre en
+    service que si elle fait mieux sur le test maison, sans régression sur
+    les contrôles écrits."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    cellules = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+    [aides] = [c for c in cellules if c.startswith("# Modèle final")]
+    [cellule] = [c for c in cellules if "JELI_V3 = " in c]
+    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
+    (ckpt / "nllb-bm2fr-v3").mkdir(parents=True)
+    (ckpt / "nllb-bm2fr-v3" / "model.safetensors").write_bytes(b"")
+    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v1", {"dev": 0.5, "test": 0.5})
+    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v3", {"dev": 0.8, "test": 0.8})
+    for corpus in ("Bayelemabaga", "MAFAND"):
+        _rapport_mt(out / "controles", f"controle {corpus} nllb-v1", 0.8)
+        _rapport_mt(out / "controles", f"controle {corpus} nllb-bm2fr-v3",
+                    bayelemabaga_v3 if corpus == "Bayelemabaga" else 0.8)
+    prises = tmp_path / "dire.jsonl"
+    prises.write_text("{}\n")
+
+    ns = {"CKPT": str(ckpt), "OUT": str(out)}
+    exec(_sans_shell(aides), ns)
+    ns.update(chemins=lambda: ("whisper", "nllb-v1", "fr2bm-v1"), a_jour=lambda *a, **k: True,
+              place_drive=lambda go: None, CFG=str(tmp_path / "assistant.json"),
+              NLLB_V3=True, JELI_CONFIG="", PRISES=str(prises), MAISON="maison.jsonl",
+              NLLB_FR2BM="fr2bm-v1", B2F_V3=str(ckpt / "nllb-bm2fr-v3"),
+              TITULAIRE="Whisper + NLLB v1",
+              RAPPORT_EN_SERVICE=str(out / "maison-assemblages" / "Whisper-NLLB-v1"
+                                     / "cascade-20261017-090000.json"))
+    ns["EN_SERVICE"] = ns["en_service"]()
+    code = cellule
+    for chemin in ("/content/donnees-v3", "/content/nllb-bm2fr-v3", "/content/maison-dev.jsonl",
+                   "/content/assemblage-v3.json"):
+        code = code.replace(chemin, str(tmp_path / Path(chemin).name))
+    exec(_sans_shell(code), ns)
+
+    dev = (tmp_path / "maison-dev.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(dev) == 40 and json.loads(dev[0]) == {"bm": "a bɛ taa", "fr": PHRASES_MAISON[0]}
+    sortie = capsys.readouterr().out
+    assert "Dev maison : 40 énoncés transcrits par Whisper" in sortie
+    retenu = json.loads((ckpt / "retenu.json").read_text())
+    cfg = json.loads((tmp_path / "assistant.json").read_text())
+    if promu:
+        assert "**Promu : Whisper + NLLB v3 remplace Whisper + NLLB v1.**" in sortie
+        assert retenu["bm2fr"] == cfg["mt_in"]["model_id"] == str(ckpt / "nllb-bm2fr-v3")
+    else:
+        assert "régression sur chrF++ bm→fr" in sortie and retenu["bm2fr"] == "nllb-v1"
+        assert cfg["mt_in"]["model_id"] == "nllb-v1"
+    assert retenu["historique"][-1]["maillon"] == "bambara → français (v3)"

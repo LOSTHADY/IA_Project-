@@ -264,6 +264,33 @@ def test_nllb_avec_jeli_asr_en_plus(work, tmp_path):
     assert (out / "model.safetensors").exists()
 
 
+def test_nllb_v3_sources_locales_et_validation_imposee(work, tmp_path):
+    """V3 : dossiers locaux de scripts/donnees_v3.py, « @N » par source, rappel
+    du jeu principal limité, et checkpoint choisi sur un jeu imposé (le dev
+    maison, tel que la reconnaissance l'a transcrit)."""
+    from tiny_models import PAIRS
+
+    extra = tmp_path / "bamadaba"
+    extra.mkdir()
+    (extra / "train.jsonl").write_text("\n".join(
+        json.dumps({"bm": f"{bm} {i}", "fr": f"{fr} {i}", "source": "x"})
+        for i in range(10) for bm, fr in PAIRS[:1]), encoding="utf-8")
+    dev = tmp_path / "maison-dev.jsonl"
+    dev.write_text("\n".join(json.dumps({"bm": bm, "fr": fr}) for bm, fr in PAIRS[:3]),
+                   encoding="utf-8")
+    out = tmp_path / "nllb-v3"
+    log = _train("finetune_nllb.py", "--dataset", str(work["text"]), "--main-samples", "2",
+                 "--extra-dataset", f"{extra}@6", "--eval-file", str(dev),
+                 "--model", str(work["nllb"]), "--direction", "bm2fr", "--save-steps", "2",
+                 "--output", str(out))
+    assert f"Validation imposée : {dev} (3 paires)" in log
+    assert f"+ {extra}@6" not in log and f"+ {extra} : 6 paires d'entraînement, 0 de " \
+        "validation" in log
+    # 2 paires du jeu principal (4 phrases distinctes au plus) + 6 paires locales.
+    assert "Entraînement : 8 paires (0 doublons retirés) ; validation : 3" in log
+    assert (out / "model.safetensors").exists()
+
+
 def test_nllb_impose_la_langue_cible(nllb_ft):
     from transformers import AutoTokenizer
 

@@ -182,6 +182,35 @@ et locuteur. Ces chiffres décrivent : deux sous-groupes n'ont ni les mêmes
 nettement à part y apparaît aussi (micro défectueux, transcription à
 revoir).
 
+### Mettre un modèle en service : meilleur, pas « peut-être meilleur »
+
+Constat du 16 octobre (RESULTATS.md) : deux maillons choisis parce qu'ils
+gagnaient sur Jeli-ASR ont donné, au micro, un assistant moins bon. Un test
+qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliquée
+à tout changement de modèle ou d'assemblage (`eval/promotion.py`) :
+
+1. **Le jeu maison** (phrases du quotidien dites dans l'atelier, la phrase
+   française affichée pour référence) est coupé en deux moitiés fixes, par
+   phrase : **dev** et **test** (`eval.atelier.partition`).
+2. **On choisit sur le dev** : entre assemblages (§9a), entre checkpoints
+   d'un entraînement (`finetune_nllb.py --eval-file`, le dev tel que la
+   reconnaissance l'a transcrit).
+3. **On décide sur le test**, que ce choix n'a pas vu : le candidat remplace
+   le modèle en service seulement si l'IC à 95 % (bootstrap apparié) de son
+   écart de chrF++ est entièrement au-dessus de zéro. À égalité, rien ne
+   change.
+4. **On ne casse rien ailleurs** : sur les tests écrits (Bayelemabaga,
+   MAFAND), refus si le candidat y perd plus d'un point de façon établie.
+   Ces tests ne choisissent jamais.
+5. **Le sens français → bambara**, sans référence bambara dans le jeu maison,
+   change seulement si les jugements à l'aveugle de l'atelier le préfèrent
+   (test du signe).
+
+Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
+le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le
+renouveler par de nouvelles phrases et de nouveaux locuteurs. Et avec moins
+de 8 locuteurs, les IC sont tirés par énoncé : ils valent pour ces voix.
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source

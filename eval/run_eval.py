@@ -79,7 +79,9 @@ def evaluate(
                      "register": item.register, "code_switching": item.code_switching,
                      "conditions": item.extra.get("conditions", ""),
                      # À qui l'énoncé était dit (atelier) : ami, inconnu, aîné.
-                     "interlocuteur": item.extra.get("interlocuteur", "")})
+                     "interlocuteur": item.extra.get("interlocuteur", ""),
+                     # dev (choix) ou test (verdict) : eval.promotion.
+                     "partition": item.extra.get("partition", "")})
         logger.info("[%d/%d] %s — RTF %.2f", idx, len(items), item.id, trace.rtf)
 
     if not traces:

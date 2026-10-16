@@ -30,6 +30,7 @@ jamais versionné (la voix est une donnée personnelle, le dépôt est public) :
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -90,6 +91,15 @@ def charger_phrases_a_dire(path: str | Path = PHRASES_A_DIRE) -> list[dict]:
     if len(set(ids)) != len(ids):
         raise ValueError(f"{path} : identifiants de rubrique en double")
     return phrases
+
+
+def partition(prompt_id: str) -> str:
+    """« dev » ou « test », fixé par la phrase : toutes les prises d'une même
+    phrase (locuteurs, interlocuteurs, façons de la dire) vont du même côté.
+    Le dev sert à choisir (assemblage, checkpoint) ; le test, que ce choix
+    n'a jamais vu, décide si un modèle remplace le précédent
+    (eval.promotion). Stable d'une session et d'une machine à l'autre."""
+    return "dev" if hashlib.sha1(prompt_id.encode("utf-8")).digest()[0] % 2 == 0 else "test"
 
 
 def texte_fr(phrase: dict, interlocuteur: str = "ami") -> str:
@@ -574,7 +584,8 @@ class Atelier:
                  "region": regions.get(p.speaker, ""), "register": "dit",
                  "interlocuteur": _interlocuteur(asdict(p)),
                  "code_switching": p.code_switching, "duration_s": p.duration_s,
-                 "rubrique": p.rubrique, "conditions": p.conditions, "argot": p.argot}
+                 "rubrique": p.rubrique, "conditions": p.conditions, "argot": p.argot,
+                 "prompt_id": p.prompt_id, "partition": partition(p.prompt_id)}
                 for p in self.prises("dire")]
         out["testset"] = self.root / "testset-dire.jsonl"
         _write_jsonl(out["testset"], test)

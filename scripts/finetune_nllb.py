@@ -13,7 +13,15 @@ Données en plus (--extra-dataset RobotsMali/jeli-asr) : les transcriptions de
 Jeli-ASR et leurs traductions, du bambara parlé, plus proche de ce que
 l'assistant entend que le bambara écrit de Bayelemabaga (souvent religieux).
 L'audio n'est pas décodé. Les paires en double sont retirées ; un jeu sans
-partition de validation en cède quelques paires à la validation.
+partition de validation en cède quelques paires à la validation. Un jeu peut
+aussi être un dossier ou un fichier JSON local (scripts/donnees_v3.py), et
+« @N » n'en garde que N paires tirées au hasard (RobotsMali/jeli-asr@4000).
+
+--eval-file remplace la validation par un jeu choisi : le meilleur checkpoint
+est alors celui qui traduit le mieux ce jeu. Pour l'assistant, ce sont les
+phrases de développement du jeu maison, telles que la reconnaissance les a
+transcrites (§9a du notebook) : on choisit sur la parole quotidienne, pas
+sur des contes ou des griots.
 
 Référence : Bayelemabaga contient ~47k paires alignées bambara-français
 issues du Corpus Bambara de Référence (NAACL 2025). C'est peu — attention au
@@ -39,9 +47,15 @@ def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataset", default=BAYELEMABAGA)
-    p.add_argument("--extra-dataset", action="append", default=[], metavar="ID[:CONFIG]",
+    p.add_argument("--extra-dataset", action="append", default=[], metavar="ID[:CONFIG][@N]",
                    help="jeu parallèle ajouté à l'entraînement (répétable), ex. "
-                        "RobotsMali/jeli-asr")
+                        "RobotsMali/jeli-asr@4000, ou un dossier local")
+    p.add_argument("--main-samples", type=int, default=None,
+                   help="ne garder que N paires du jeu principal, tirées au hasard (rappel "
+                        "de Bayelemabaga sans qu'il domine le mélange)")
+    p.add_argument("--eval-file", default=None,
+                   help="validation (choix du checkpoint) sur ce jeu, colonnes bm et fr, au "
+                        "lieu de celle des jeux d'entraînement")
     p.add_argument("--model", default="facebook/nllb-200-distilled-600M")
     p.add_argument("--direction", choices=["bm2fr", "fr2bm"], required=True)
     p.add_argument("--bm-column", default=None, help="défaut : détectée")
@@ -109,6 +123,8 @@ def main() -> None:
         train_raw, eval_raw = pairs(ds["train"], cols), pairs(ds[eval_key], cols)
     if args.max_samples:
         train_raw = train_raw.select(range(min(args.max_samples, len(train_raw))))
+    if args.main_samples and len(train_raw) > args.main_samples:
+        train_raw = train_raw.shuffle(seed=42).select(range(args.main_samples))
     n_eval = args.eval_samples or len(eval_raw)
     if args.extra_dataset:
         n_eval = max(1, n_eval // 2)  # moitié pour le jeu principal, moitié pour les autres
@@ -121,20 +137,31 @@ def main() -> None:
         trains, evals = [train_raw], [eval_raw]
         n_extra = max(1, (args.eval_samples or 300) // (2 * len(args.extra_dataset)))
         for spec in args.extra_dataset:
+            spec, _, n_keep = spec.partition("@")
             name, _, config = spec.partition(":")
             extra = load_any(name, config or None)
             extra_cols = detect_columns(extra["train"].features, need_fr=True)
             extra_pairs = pairs(extra["train"], extra_cols)
             if args.max_samples:
                 extra_pairs = extra_pairs.select(range(min(args.max_samples, len(extra_pairs))))
-            # Le test reste intact : la validation vient de la partition train.
-            held = extra_pairs.train_test_split(test_size=n_extra, seed=42)
+            if n_keep and len(extra_pairs) > int(n_keep):
+                extra_pairs = extra_pairs.shuffle(seed=42).select(range(int(n_keep)))
+            if args.eval_file:  # validation imposée : tout va à l'entraînement
+                held = {"train": extra_pairs, "test": extra_pairs.select([])}
+            else:
+                # Le test reste intact : la validation vient de la partition train.
+                held = extra_pairs.train_test_split(test_size=n_extra, seed=42)
             trains.append(held["train"])
             evals.append(held["test"])
             print(f"+ {name} : {len(held['train'])} paires d'entraînement, "
                   f"{len(held['test'])} de validation ({extra_cols.describe()})")
         train_raw = concatenate_datasets(trains).shuffle(seed=42)
         eval_raw = concatenate_datasets(evals)
+
+    if args.eval_file:
+        imposee = load_any(args.eval_file)["train"]
+        eval_raw = pairs(imposee, detect_columns(imposee.features, need_fr=True))
+        print(f"Validation imposée : {args.eval_file} ({len(eval_raw)} paires)")
 
     seen: set = set()
 
