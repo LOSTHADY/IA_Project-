@@ -585,3 +585,45 @@ Corrigé dans la foulée, côté assistant (`PipelineConfig`) :
   pour en mesurer l'effet) ;
 - **réponses plus longues** : jusqu'à 5 phrases au lieu de 3, chacune
   traduite à part (NLLB est entraîné sur des phrases isolées).
+
+### Second tour : NLLB v2 (16 octobre)
+
+NLLB v2 : reprise de la v1, Bayelemabaga + traductions françaises de
+Jeli-ASR, une époque par sens. Mêmes énoncés de test qu'au §8.
+
+| chrF++ | NLLB v1 | NLLB v2 | Écart (IC à 95 %) |
+|---|---|---|---|
+| Bayelemabaga, bambara → français | 27,8 | 28,8 | +1,0 [0,3 ; 1,8] |
+| Bayelemabaga, français → bambara | 29,9 | 30,7 | +0,8 [0,1 ; 1,6] |
+| Jeli-ASR, bambara → français | 26,1 | 37,5 | +11,4 [10,0 ; 12,9] |
+| Jeli-ASR, français → bambara | 30,7 | 36,3 | +5,6 [4,6 ; 6,7] |
+| Cascade Soloni depuis l'audio (Jeli-ASR) | 23,7 | 31,2 | +7,5 [6,1 ; 9,0] |
+
+Le gain sur Jeli-ASR est surestimé : 24 % des phrases longues de son test
+figurent aussi dans son entraînement, que la v2 a vu. Sur Bayelemabaga, où
+rien n'a changé dans les données, le gain est d'un point.
+
+**Le jeu maison** (atelier, 555 phrases dites par 2 locuteurs, français de
+référence) : cascade Soloni + NLLB v2 26,7, bout-en-bout Whisper 12,9. La
+v1 n'y a pas été mesurée.
+
+**Au micro, l'auteur juge la nouvelle démo nettement moins bonne**, sur les
+mêmes enregistrements que la veille, compréhension comprise. Or la démo a
+changé de deux maillons à la fois : Whisper + NLLB v1 le 15, Soloni +
+NLLB v2 le 16, chacun choisi parce qu'il gagnait sur Jeli-ASR. Rien ne dit
+lequel a dégradé la parole quotidienne, ni si c'est le cas sur une mesure.
+Deux causes établies :
+
+- **Soloni rend parfois « <tag> » seul**, sur des énoncés courts (2 sur les
+  8 énoncés affichés du test de la chaîne) : NLLB le traduisait « Tag » et
+  le LLM répondait qu'il ne pouvait pas aider. Les annotations sont
+  désormais retirées avant la traduction ; s'il ne reste rien, l'assistant
+  demande de répéter.
+- **Le choix des modèles se faisait sur Jeli-ASR**, pas sur la voix de
+  l'utilisateur. Le §9a mesure maintenant les quatre assemblages (Whisper ou
+  Soloni, NLLB v1 ou v2) sur le jeu maison et retient le meilleur pour la
+  démo.
+
+Enfin, avec moins de 8 locuteurs, les IC sont désormais tirés par énoncé :
+avec 1 ou 2 locuteurs, le tirage par locuteur donnait un IC nul ou presque,
+et n'importe quel écart paraissait établi.

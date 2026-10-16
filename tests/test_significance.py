@@ -140,7 +140,8 @@ def test_un_seul_locuteur_tire_les_enonces():
                    np.column_stack([rng.integers(0, 6, 40), np.full(40, 10)]).astype(float),
                    voices.speakers)
     res = bootstrap([voices, noisy], n_boot=300)
-    assert res["unite"] == "enonce" and res["un_seul_locuteur"] and res["n_unites"] == 40
+    assert res["unite"] == "enonce" and res["locuteurs_seulement"] == 1
+    assert res["n_unites"] == 40
     assert _width(res["systemes"][1]) > 0
     with pytest.raises(ValueError, match="un seul locuteur"):
         bootstrap([voices], n_boot=10, unit="locuteur")
@@ -231,11 +232,16 @@ def test_cli_jeu_maison_tire_les_locuteurs(tmp_path, capsys):
             for i, (h, r, f, fr) in enumerate(zip(HYPS, REFS, FR_H, FR_R))]
     path = _report(tmp_path / "cascade.json", {"architecture": "cascade"}, rows)
     assert load_series(path)[1]["WER strict"].speakers[:2] == ["spk-00", "spk-01"]
+    # Trois voix : trop peu de grappes, « auto » tire les énoncés et le dit.
     significance.main([str(path), "--n-boot", "50"])
+    out = capsys.readouterr().out
+    assert "en tirant les énoncés" in out and "**3 locuteurs seulement**" in out
+    significance.main([str(path), "--n-boot", "50", "--unite", "locuteur"])
     out = capsys.readouterr().out
     assert "en tirant les locuteurs (3)" in out and "Moins de 8 locuteurs" in out
     significance.main([str(path), "--n-boot", "50", "--unite", "enonce"])
-    assert "en tirant les énoncés" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "en tirant les énoncés" in out and "seulement" not in out
 
 
 # --- MOS ----------------------------------------------------------------------

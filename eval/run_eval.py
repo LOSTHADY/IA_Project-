@@ -48,6 +48,7 @@ def evaluate(
     synthesize: bool = False,
     config_path: Path | None = None,
     understand_only: bool = False,
+    name: str | None = None,
 ) -> dict:
     items = load_testset(testset_path)
     if limit:
@@ -86,6 +87,7 @@ def evaluate(
 
     evaluated = [i for i in items if any(r["item"] == i.id for r in rows)]
     report: dict = {
+        **({"nom": name} if name else {}),
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "architecture": architecture,
         "testset": str(testset_path),
@@ -171,11 +173,13 @@ def main() -> None:
                         help="inclure la TTS dans le chronométrage (plus lent)")
     parser.add_argument("--comprendre-seulement", action="store_true",
                         help="audio -> français seulement, sans réponse ni synthèse")
+    parser.add_argument("--nom", default=None,
+                        help="nom du système dans les comparaisons (eval.significance)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     report = evaluate(args.testset, args.arch, args.out, args.limit, args.synthesize,
-                      args.config, args.comprendre_seulement)
+                      args.config, args.comprendre_seulement, args.nom)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

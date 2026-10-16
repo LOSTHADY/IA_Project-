@@ -89,6 +89,18 @@ def fold(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+# Annotations de transcription que certains modèles recopient : « <tag> »
+# (Soloni de RobotsMali, sur des énoncés courts ou peu clairs), « [musique] ».
+_TAG_RE = re.compile(r"<[^<>\s]{1,24}>|\[[^\[\]]{1,24}\]")
+
+
+def strip_tags(text: str) -> str:
+    """Retire les annotations entre chevrons ou crochets d'une transcription :
+    elles ne sont pas de la parole, et le traducteur les prendrait pour des
+    mots (« <tag> » devenait « Tag »)."""
+    return _WS_RE.sub(" ", _TAG_RE.sub(" ", text)).strip()
+
+
 def strip_punctuation(text: str) -> str:
     """Retire la ponctuation mais garde lettres, diacritiques et apostrophes.
 

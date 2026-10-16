@@ -358,3 +358,53 @@ def test_notebook_prepare_chaque_lot_une_fois(tmp_path, capsys):
                 "NLLB v2 / Jeli-ASR"):
         assert nom in phase3, nom
     assert 'MT_LABEL = "NLLB affiné"' in phase3 and "$MT_LABEL / Jeli-ASR" in phase3
+
+
+def _sans_shell(cellule: str) -> str:
+    """La cellule en Python pur : chaque commande « ! » (et sa suite après
+    « \\ ») devient « pass », à la même indentation."""
+    lignes, suite = [], False
+    for line in cellule.splitlines():
+        stripped = line.lstrip()
+        if suite:
+            suite = line.rstrip().endswith("\\")
+            continue
+        if stripped.startswith(("!", "%")):
+            lignes.append(line[:len(line) - len(stripped)] + "pass")
+            suite = line.rstrip().endswith("\\")
+        else:
+            lignes.append(line)
+    return "\n".join(lignes)
+
+
+def test_notebook_phase3_retient_l_assemblage_qui_comprend_le_mieux_ta_voix(tmp_path, capsys):
+    """§9a : quatre assemblages mesurés sur le jeu maison ; le meilleur chrF++
+    devient la configuration de la démo, pas « Soloni + v2 si entraînée »."""
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+                 if c.startswith("import glob, json, os\nfrom pathlib import Path\nATELIER")]
+    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
+    (ckpt / "nllb-bm2fr-v2").mkdir(parents=True)
+    (ckpt / "nllb-bm2fr-v2" / "model.safetensors").write_bytes(b"")
+    atelier = tmp_path / "atelier"
+    atelier.mkdir()
+    (atelier / "dire.jsonl").write_text("{}\n")
+    chrf = {"Whisper-NLLB-v1": 31.0, "Whisper-NLLB-v2": 28.0, "Soloni-NLLB-v1": 24.0,
+            "Soloni-NLLB-v2": 26.7}
+    for cle, score in chrf.items():
+        d = out / "maison-assemblages" / cle
+        d.mkdir(parents=True)
+        (d / "cascade-20261017-090000.json").write_text(json.dumps(
+            {"nom": cle, "mt_in_depuis_asr": {"chrf": score}}))
+    code = _sans_shell(cellule.replace("/content/drive/MyDrive/bambara/atelier", str(atelier))
+                       .replace("/content/assemblage-", str(tmp_path / "assemblage-")))
+    cfg = tmp_path / "assistant.json"
+    ns = {"CKPT": str(ckpt), "OUT": str(out), "CFG": str(cfg), "WHISPER": "whisper",
+          "SOLONI": "soloni", "NLLB_BM2FR": "v2-par-defaut", "NLLB_FR2BM": "fr2bm",
+          "chemins": lambda: ("whisper", "nllb-v1", "fr2bm"), "a_jour": lambda *a, **k: True}
+    exec(code, ns)
+    assert ns["ASSEMBLAGE"] == "Whisper + NLLB v1" and ns["NLLB_BM2FR"] == "nllb-v1"
+    assert json.loads(cfg.read_text()) == {"device": "cuda", "asr": {"model_id": "whisper"},
+                                           "mt_in": {"model_id": "nllb-v1"},
+                                           "mt_out": {"model_id": "fr2bm"}}
+    sortie = capsys.readouterr().out
+    assert sortie.index("Whisper + NLLB v1 : chrF++ 31.0") < sortie.index("Soloni + NLLB v1")

@@ -29,6 +29,7 @@ from .config import PipelineConfig
 from .llm import ChatModel, split_sentences
 from .mt import Translator
 from .nombres import en_bambara, en_chiffres
+from .normalize import strip_tags
 from .templates import TemplateBank
 from .tts import SpeechSynthesizer, SpeechResult
 
@@ -45,7 +46,7 @@ class TurnTrace:
     source_fr: str = ""           # entrée du LLM
     reply_fr: str = ""            # sortie du LLM, après simplification
     reply_bm: str = ""            # réponse finale en bambara
-    reply_source: str = "mt"      # "template" ou "mt"
+    reply_source: str = "mt"      # "template", "mt" ou "pas_compris"
     template_id: str | None = None
     template_score: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
@@ -65,6 +66,9 @@ class TurnTrace:
         d["total_seconds"] = round(self.total_seconds, 3)
         d["rtf"] = round(self.rtf, 3)
         return d
+
+
+PAS_COMPRIS_FR = "Je n'ai pas bien entendu. Peux-tu répéter ?"
 
 
 class _Timer:
@@ -106,18 +110,32 @@ class VoicePipeline:
         with _Timer(trace.timings, "asr"):
             res = self.asr.transcribe(audio)
         trace.asr_text = res.text
+        # Sortie brute gardée dans asr_text ; la suite ne voit que la parole.
+        text = strip_tags(res.text)
 
         if res.language == "fr":
-            trace.source_fr = res.text
-            return res.text
+            trace.source_fr = text
+            return text
 
-        trace.source_bm = res.text
+        trace.source_bm = text
+        if not text:  # rien d'autre qu'une annotation : rien à traduire
+            trace.source_fr = ""
+            return ""
         with _Timer(trace.timings, "mt_in"):
-            trace.source_fr = self.mt_in.translate(res.text)
+            trace.source_fr = self.mt_in.translate(text)
         return trace.source_fr
 
     def respond(self, trace: TurnTrace, history: list[dict] | None = None) -> str:
-        """Texte français -> réponse bambara, gabarit d'abord puis repli MT."""
+        """Texte français -> réponse bambara, gabarit d'abord puis repli MT.
+        Rien entendu (aucune parole, ou une annotation seule comme « <tag> ») :
+        on demande de répéter, sans passer par le LLM."""
+        if not trace.source_bm.strip() and not trace.source_fr.strip():
+            trace.reply_source = "pas_compris"
+            trace.reply_fr = PAS_COMPRIS_FR
+            with _Timer(trace.timings, "mt_out"):
+                trace.reply_bm = self._translate_reply(PAS_COMPRIS_FR)
+            return trace.reply_bm
+
         # Un gabarit ne peut être testé que si l'on dispose du texte bambara,
         # donc jamais en e2e — limite à documenter dans le mémoire.
         if trace.source_bm:

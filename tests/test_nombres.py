@@ -84,3 +84,47 @@ def test_reglages_desactivables():
     pipe = _pipeline(spell_numbers=False, translate_by_sentence=False)
     assert pipe._translate_reply("Un, deux. Trois.") == "Un, deux. Trois."
     assert pipe.mt_out.calls == ["Un, deux. Trois."]
+
+
+class _ASR:
+    def __init__(self, text, language="bm"):
+        self.text, self.language = text, language
+
+    def transcribe(self, audio):
+        from bambara_voice.asr import ASRResult
+        return ASRResult(text=self.text, language=self.language, audio_seconds=1.0)
+
+
+class _LLM:
+    def __init__(self):
+        self.calls = []
+
+    def reply(self, text, history=None):
+        self.calls.append(text)
+        return "Réponse."
+
+
+def test_annotation_seule_de_la_reconnaissance_demande_de_repeter():
+    """Soloni rend parfois « <tag> » seul : ce n'est pas de la parole, et le
+    traduire donnait « Tag », puis « je ne peux pas vous aider »."""
+    import numpy as np
+
+    from bambara_voice.normalize import strip_tags
+    from bambara_voice.pipeline import PAS_COMPRIS_FR
+
+    assert strip_tags("<tag>") == "" and strip_tags("i ni ce <tag> [musique] wa") == "i ni ce wa"
+    assert strip_tags("n b'a fɔ") == "n b'a fɔ"
+
+    pipe = _pipeline()
+    pipe.asr, pipe.mt_in, pipe.llm = _ASR("<tag>"), _MT(), _LLM()
+    trace, _ = pipe.run(np.zeros(16_000, np.float32), synthesize=False)
+    assert trace.asr_text == "<tag>" and trace.source_bm == "" and trace.source_fr == ""
+    assert pipe.mt_in.calls == [] and pipe.llm.calls == []
+    assert trace.reply_source == "pas_compris" and trace.reply_fr == PAS_COMPRIS_FR
+
+    # Une annotation au milieu de la parole est seulement retirée.
+    pipe = _pipeline()
+    pipe.asr, pipe.mt_in, pipe.llm = _ASR("i ni sɔgɔma <tag>"), _MT(), _LLM()
+    trace, _ = pipe.run(np.zeros(16_000, np.float32), synthesize=False)
+    assert trace.source_bm == "i ni sɔgɔma" and pipe.mt_in.calls == ["i ni sɔgɔma"]
+    assert trace.reply_source != "pas_compris"
