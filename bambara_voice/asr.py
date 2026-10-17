@@ -134,9 +134,11 @@ class SpeechRecognizer:
         if cfg.nemo_decoder == "ctc":
             model.change_decoding_strategy(decoder_type="ctc",
                                            decoding_cfg=model.cfg.aux_ctc.decoding)
-        elif device.type == "cuda":
+        elif device.type == "cuda" and hasattr(model, "joint"):
             # Fiche de Soloni : les graphes CUDA du décodeur TDT échouent sur
-            # certains GPU (« CUDA error: invalid argument »).
+            # certains GPU (« CUDA error: invalid argument »). Un modèle CTC
+            # seul (Soloba) n'a ni ce décodeur ni ce réglage : NeMo refuserait
+            # la clé inconnue.
             from omegaconf import open_dict
 
             decoding = model.cfg.decoding

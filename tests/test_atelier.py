@@ -428,34 +428,40 @@ def test_notebook_phase3_ne_change_d_assemblage_que_s_il_fait_mieux(tmp_path, ca
         ns.update(chemins=lambda: ("whisper", "nllb-v1", "fr2bm-v1"),
                   a_jour=lambda *a, **k: True, MOYENNE=str(tmp_path / "moyenne"),
                   CFG=str(tmp_path / "assistant.json"), WHISPER="whisper", SOLONI="soloni",
-                  NLLB_FR2BM="fr2bm-v1")
+                  SOLOBA="soloba", NLLB_FR2BM="fr2bm-v1")
         exec(_sans_shell(cellule.replace("/content/drive/MyDrive/bambara/atelier", str(atelier))
                          .replace("/content/assemblage-", str(tmp_path / "assemblage-"))), ns)
         return ns, json.loads((tmp_path / "assistant.json").read_text())
 
     egal = {"dev": 0.5, "test": 0.5}
-    # 1. Soloni + moyenne : meilleur sur le dev et sur le test → mis en service.
-    ns, cfg = run({"Whisper-NLLB-v1": egal, "Whisper-NLLB-v2": egal,
-                   "Whisper-NLLB-moyenne": egal, "Soloni-NLLB-v1": egal,
-                   "Soloni-NLLB-v2": {"dev": 0.6, "test": 0.5},
-                   "Soloni-NLLB-moyenne": {"dev": 0.8, "test": 0.8}})
+    # 1. En service : Whisper + v1. Une seule chose change à la fois : chaque
+    # reconnaissance avec v1, chaque traduction avec Whisper. Soloni + v1 gagne
+    # sur le dev et sur le test → mis en service.
+    ns, cfg = run({"Whisper-NLLB-v1": egal, "Soloni-NLLB-v1": {"dev": 0.8, "test": 0.8},
+                   "Soloni-CTC-NLLB-v1": {"dev": 0.6, "test": 0.6}, "Soloba-NLLB-v1": egal,
+                   "Whisper-NLLB-v2": egal, "Whisper-NLLB-moyenne": egal})
     sortie = capsys.readouterr().out
-    assert "Candidat (meilleur sur le dev) : Soloni + NLLB moyenne" in sortie
+    assert ns["COMBINAISONS"] == [("Soloba", "NLLB v1"), ("Soloni", "NLLB v1"),
+                                  ("Soloni CTC", "NLLB v1"), ("Whisper", "NLLB moyenne"),
+                                  ("Whisper", "NLLB v1"), ("Whisper", "NLLB v2")]
+    assert "Candidat (meilleur sur le dev) : Soloni + NLLB v1" in sortie and "⚠️" not in sortie
     assert "**Promu" in sortie and "| Whisper + NLLB v1 (en service) | " in sortie
     assert cfg == {"device": "cuda", "asr": {"model_id": "soloni", "kind": "nemo"},
-                   "mt_in": {"model_id": str(tmp_path / "moyenne")},
-                   "mt_out": {"model_id": "fr2bm-v1"}}
+                   "mt_in": {"model_id": "nllb-v1"}, "mt_out": {"model_id": "fr2bm-v1"}}
     retenu = json.loads((ckpt / "retenu.json").read_text())
-    assert retenu["nom_bm2fr"] == "NLLB moyenne" and retenu["historique"][0]["promu"]
+    assert retenu["nom_asr"] == "Soloni" and retenu["historique"][0]["promu"]
 
-    # 2. Whisper + v2 : bien meilleur sur le dev, pas sur le test → refusé.
-    ns, cfg = run({"Soloni-NLLB-moyenne": {"dev": 0.5, "test": 0.5},
-                   "Whisper-NLLB-v2": {"dev": 0.9, "test": 0.5}})
+    # 2. En service : Soloni + v1. Soloni + v2 bien meilleur sur le dev, pas
+    # sur le test → refusé ; la configuration ne bouge pas.
+    ns, cfg = run({"Soloni-NLLB-v2": {"dev": 0.9, "test": 0.8},
+                   "Soloni-NLLB-moyenne": egal})
     sortie = capsys.readouterr().out
-    assert "Candidat (meilleur sur le dev) : Whisper + NLLB v2" in sortie
-    assert "**Refusé : Soloni + NLLB moyenne reste en service.**" in sortie
-    assert cfg["asr"]["model_id"] == "soloni" and ns["EN_SERVICE"]["nom_bm2fr"] == "NLLB moyenne"
-    assert ns["RAPPORT_EN_SERVICE"].endswith("Soloni-NLLB-moyenne/cascade-20261017-090000.json")
+    assert ("Soloni", "NLLB v2") in ns["COMBINAISONS"]
+    assert ("Whisper", "NLLB v2") not in ns["COMBINAISONS"]
+    assert "Candidat (meilleur sur le dev) : Soloni + NLLB v2" in sortie
+    assert "**Refusé : Soloni + NLLB v1 reste en service.**" in sortie
+    assert cfg["mt_in"]["model_id"] == "nllb-v1" and ns["EN_SERVICE"]["nom_bm2fr"] == "NLLB v1"
+    assert ns["RAPPORT_EN_SERVICE"].endswith("Soloni-NLLB-v1/cascade-20261017-090000.json")
 
 
 def _rapport_mt(dossier: Path, nom: str, juste: float) -> None:
@@ -469,9 +475,10 @@ def _rapport_mt(dossier: Path, nom: str, juste: float) -> None:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
 
 
-@pytest.mark.parametrize("bayelemabaga_v3, promu", [(0.8, True), (0.3, False)])
+@pytest.mark.parametrize("bayelemabaga_v3, dev_v3, promu", [(0.8, 0.8, True), (0.3, 0.8, False),
+                                                       (0.8, 0.45, False)])
 def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
-                                                              bayelemabaga_v3, promu):
+                                                              bayelemabaga_v3, dev_v3, promu):
     """§9c : dev maison transcrit pour choisir le checkpoint ; la v3 n'entre en
     service que si elle fait mieux sur le test maison, sans régression sur
     les contrôles écrits."""
@@ -484,7 +491,7 @@ def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
     (ckpt / "nllb-bm2fr-v3").mkdir(parents=True)
     (ckpt / "nllb-bm2fr-v3" / "model.safetensors").write_bytes(b"")
     _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v1", {"dev": 0.5, "test": 0.5})
-    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v3", {"dev": 0.8, "test": 0.8})
+    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v3", {"dev": dev_v3, "test": 0.8})
     for corpus in ("Bayelemabaga", "MAFAND"):
         _rapport_mt(out / "controles", f"controle {corpus} nllb-v1", 0.8)
         _rapport_mt(out / "controles", f"controle {corpus} nllb-bm2fr-v3",
@@ -513,10 +520,14 @@ def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
     sortie = capsys.readouterr().out
     assert "Dev maison : 40 énoncés transcrits par Whisper" in sortie
     retenu = json.loads((ckpt / "retenu.json").read_text())
-    cfg = json.loads((tmp_path / "assistant.json").read_text())
+    cfg_path = tmp_path / "assistant.json"
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else None
     if promu:
         assert "**Promu : Whisper + NLLB v3 remplace Whisper + NLLB v1.**" in sortie
         assert retenu["bm2fr"] == cfg["mt_in"]["model_id"] == str(ckpt / "nllb-bm2fr-v3")
+    elif dev_v3 < 0.5:  # pas même meilleure sur le dev : refusée sans contrôles écrits
+        assert "pas meilleure sur le dev maison" in sortie and "Contrôle" not in sortie
+        assert retenu["bm2fr"] == "nllb-v1" and not (tmp_path / "assistant.json").exists()
     else:
         assert "régression sur chrF++ bm→fr" in sortie and retenu["bm2fr"] == "nllb-v1"
         assert cfg["mt_in"]["model_id"] == "nllb-v1"

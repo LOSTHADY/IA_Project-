@@ -190,9 +190,10 @@ class _Hypothesis:
         self.text = text
 
 
-def _fake_nemo(monkeypatch, output):
+def _fake_nemo(monkeypatch, output, tdt=True):
     """Un faux paquet nemo : NeMo est trop lourd pour les tests. Seule sa
-    dépendance omegaconf, légère, est requise."""
+    dépendance omegaconf, légère, est requise. `tdt` : modèle à décodeur
+    transducteur (Soloni) ; sinon CTC seul (Soloba)."""
     import types
 
     pytest.importorskip("omegaconf")
@@ -201,12 +202,19 @@ def _fake_nemo(monkeypatch, output):
 
     calls: dict = {}
 
+    from omegaconf import OmegaConf
+
     class FakeModel:
+        def __init__(self):
+            if tdt:
+                self.joint = object()
+
         def eval(self):
             calls["eval"] = True
             return self
 
-        cfg = types.SimpleNamespace(aux_ctc=types.SimpleNamespace(decoding="ctc-cfg"))
+        cfg = types.SimpleNamespace(aux_ctc=types.SimpleNamespace(decoding="ctc-cfg"),
+                                    decoding=OmegaConf.create({"greedy": {}}))
 
         def change_decoding_strategy(self, decoding_cfg=None, decoder_type=None):
             calls["decoder"] = (decoder_type, decoding_cfg)
@@ -273,3 +281,17 @@ def test_nemo_refuse_la_traduction(monkeypatch):
     with pytest.raises(ValueError, match="NEMO"):
         e2e_config(asr=ASRConfig(kind="nemo"))
 
+
+
+@pytest.mark.parametrize("tdt", [True, False])
+def test_nemo_sur_gpu_graphes_cuda_coupes_seulement_pour_le_tdt(monkeypatch, tdt):
+    """Soloni (TDT) : graphes CUDA du décodeur coupés. Soloba (CTC seul) :
+    rien à couper, et NeMo refuserait la clé dans sa configuration CTC."""
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")], tdt=tdt)
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloba", kind="nemo"), device="cuda")
+    rec._load_nemo()
+    if tdt:
+        decoder_type, cfg = calls["decoder"]
+        assert decoder_type is None and cfg.greedy.use_cuda_graph_decoder is False
+    else:
+        assert "decoder" not in calls

@@ -627,3 +627,43 @@ Deux causes établies :
 Enfin, avec moins de 8 locuteurs, les IC sont désormais tirés par énoncé :
 avec 1 ou 2 locuteurs, le tirage par locuteur donnait un IC nul ou presque,
 et n'importe quel écart paraissait établi.
+
+### Sur la voix de l'utilisateur : choix des maillons, puis NLLB v3 (17 octobre)
+
+Jeu maison de l'atelier : 555 énoncés de la vie courante, 2 locuteurs, coupés
+par phrase en dev (choix) et test (verdict) ; chrF++ du français compris
+depuis l'audio, sans LLM (§9a).
+
+| Assemblage | chrF++ dev | chrF++ test |
+|---|---|---|
+| Soloni + NLLB v1 | **27,8** | **28,2** |
+| Soloni + moyenne v1/v2 | 27,1 | 27,3 |
+| Soloni + NLLB v2 | 26,7 | 26,7 |
+| Whisper + NLLB v2 | 21,0 | 20,5 |
+| Whisper + NLLB v1 (en service, démo du 15) | 20,6 | 20,6 |
+| Whisper + moyenne v1/v2 | 20,4 | 20,2 |
+
+- **La reconnaissance décide de tout** : Soloni dépasse le Whisper affiné de
+  7,7 points sur le test (272 énoncés, [5,5 ; 9,7], p < 0,001), alors que
+  leur écart n'était pas établi sur Jeli-ASR. **Soloni + NLLB v1 entre en
+  service** (première décision de `eval.promotion`).
+- **NLLB v2 recule sur la parole quotidienne** : 1,5 point sous la v1 à
+  reconnaissance égale, la moyenne des poids entre les deux. Le second tour,
+  à moitié fait de récits de griots, a tiré le modèle vers ce registre :
+  l'hypothèse H2 du rapport de recherche est confirmée ; H1 (Soloni
+  inadapté aux phrases courtes) est écartée une fois les balises <tag>
+  retirées.
+- La démo jugée moins bonne le 16 (Soloni + v2) comprenait donc mieux que
+  celle du 15 (Whisper + v1) : la différence ressentie venait d'ailleurs,
+  probablement des réponses (NLLB v2 français → bambara, qui reste hors
+  service tant que les jugements à l'aveugle ne le préfèrent pas).
+
+**NLLB v3** (bambara → français, départ de la v1) : 24 221 paires (rappel de
+Bayelemabaga, MAFAND, exemples du Bamadaba, GATITOS, Jeli-ASR), 2 époques,
+1 h 08 sur T4, checkpoint choisi sur le dev maison transcrit par Soloni
+(273 énoncés). Le chrF++ du dev n'a jamais dépassé 27,6 (de 26,3 à 27,6
+selon les étapes), sous les 27,8 de la v1 au §9a. Les données publiques,
+même plus proches du quotidien que les griots, n'améliorent pas la
+compréhension de cette parole-là : il faut des paires du bon domaine. Le
+quota de Colab s'est arrêté pendant les contrôles écrits ; la décision (refus
+sur le dev) sera consignée à la prochaine exécution.
