@@ -339,7 +339,7 @@ La troisième option, réentraîner Whisper avec Kunkado en plus de Jeli-ASR, co
 | Action | Coût | Condition ou mesure |
 |---|---|---|
 | Écrire au LLACAN (Vydrin, Maslinsky, Méric) pour l'export parallèle (~27 000 phrases) et la licence du Bamadaba ; à C. Donaldson pour An ka taa | aucun | le plus gros gain en volume humain disponible |
-| Traduire vers le français les transcriptions de Kunkado et d'AfVoices, filtrer, ou rétro-traduction taguée | inférence de quelques heures, puis un entraînement | uniquement si le gain se voit sur le dev maison |
+| Traduire vers le français les transcriptions de Kunkado et d'AfVoices par un professeur ouvert (NLLB 3.3B, 1.3B, MADLAD 3B), filtrer, entraîner la v4 : **préparé le 17 octobre, §9d du notebook** | environ 2 h 30 de T4 | professeur retenu seulement s'il bat la v1 sur le dev maison ; v4 jugée sur le test maison |
 | NLLB-1.3B distillé (serré sur T4), M2M-100 418M, Toucan-1.2B, entraînés sur le même mélange | un entraînement chacun, 2 à 3 fois plus long pour le 1.3B (estimation) | même jeu maison, même ablation |
 | Déploiement CTranslate2 int8, faisceau 1–2 contre 4–5 | conversion en minutes | latence CPU, chrF++ maison |
 | Synthèse : MMS-TTS contre les modèles MALIBA-AI et sudoping01 | inférence | note d'opinion moyenne par l'atelier (`eval/mos.py`) |
@@ -356,6 +356,8 @@ Trois signaux méritent un paragraphe du mémoire.
 
 **Le Bamadaba est sous CC BY-NC-SA 3.0 France** (page officielle ; le dépôt GitHub, lui, n'a pas de fichier de licence). L'usage pour un mémoire est permis, avec attribution. Le « partage dans les mêmes conditions » vaut pour les œuvres dérivées : qu'un modèle entraîné dessus en soit une n'est pas tranché. Il est prudent de ne pas publier un tel modèle sans en parler aux auteurs.
 
+**Les traducteurs commerciaux en ligne ne peuvent pas servir de professeur.** Les conditions de Google Cloud interdisent d'utiliser la sortie d'un service d'IA pour « create or improve models similar to a Google Model » (section 17 b des [conditions spécifiques des services](https://cloud.google.com/terms/service-terms)) ; Cloud Translation en relève très probablement, ce qui n'a pas été confirmé dans la liste des services. Google Traduction reste utilisable pour comparer, ou comme traducteur dans une démo. Djelia ne publie ni conditions ni tarifs : il faut leur demander une autorisation écrite. Les professeurs du §9d sont donc des modèles ouverts, dont la licence permet cet usage en recherche : NLLB (CC-BY-NC 4.0, Meta a lui-même obtenu le 600M par distillation de son modèle de 54 milliards de paramètres) et MADLAD-400.
+
 **FLORES+ est réservé au test.** Sa licence est CC BY-SA 4.0, mais le zip est protégé par mot de passe et ses auteurs demandent de ne pas l'inclure dans des données d'entraînement ([flores-OLDI](https://github.com/avidale/flores-OLDI)). Les agrégats comme AfroLingu-MT ou les données minées brutes de NLLB peuvent le contenir : il faut les dédoublonner avant usage.
 
 | Ressource | Licence | Statut | Conséquence |
@@ -367,7 +369,7 @@ Trois signaux méritent un paragraphe du mémoire.
 | Corpus Bambara de Référence | aucune page trouvée ; textes privés | non vérifié | export à demander |
 | FLORES+ | CC BY-SA 4.0, interdit à l'entraînement | lu (miroir) | test seulement |
 | Bayelemabaga | CC-BY-SA-4.0 ou CC-BY-4.0 selon l'endroit | lu, contradictoire | le traiter comme à partage identique |
-| Kunkado | CC-BY-SA-4.0 | lu sur la copie de fiche, non confirmé ailleurs | partage identique pour les dérivés du corpus ; effet sur des poids non tranché |
+| Kunkado | CC-BY-SA-4.0 | lu deux fois sur la fiche Hugging Face (en-tête et tableau), copie du 3 septembre 2026 dans RobotsMali-AI/bambara-asr | partage identique pour les dérivés du corpus (les paires du §9d restent sur Drive) ; effet sur des poids non tranché |
 | Jeli-ASR, bam-asr-early, AfVoices, Nyana Eval | CC-BY-4.0 | lu | libre, avec attribution |
 | Bam_ASR_Eval_500 | CC-BY-4.0, mais « non-commercial research » | lu, contradictoire | évaluation de recherche seulement |
 | Soloni, Soloba | CC-BY-4.0 | lu | libre, avec attribution |
@@ -378,7 +380,8 @@ Trois signaux méritent un paragraphe du mémoire.
 | sudoping01/bambara-asr-v2 | Apache-2.0 | non vérifié | libre |
 | MALIBA-AI/bambara-tts ; sudoping01/bambara-tts | licence de recherche MALIBA-AI ; CC BY-NC 4.0 | non vérifié | recherche seulement |
 | M2M-100 418M | MIT selon les chercheurs | non vérifié | porte de sortie commerciale à confirmer |
-| MALIBA-AI/bambara-asr-v3, Toucan, MADLAD-400, oza75/bambara-mt, SMOL | inconnue | non vérifié | lire la fiche avant usage |
+| MADLAD-400 (poids des modèles de traduction) | Apache-2.0 d'après la fiche Hugging Face ; le README du dépôt google-research n'en indique pas | non vérifié ici (Hugging Face inaccessible) | professeur possible au §9d ; vérifier la fiche avant de citer |
+| MALIBA-AI/bambara-asr-v3, Toucan, oza75/bambara-mt, SMOL | inconnue | non vérifié | lire la fiche avant usage |
 | LDC2016L01 | licence LDC | non vérifié | hors de portée sans abonnement |
 | An ka taa | consultation libre, sans licence de réutilisation trouvée | non vérifié | vérification manuelle ; pas d'aspiration |
 | kalilouisangare/corpus-parallel-en-fr-bam | accès restreint ; bambara généré par NLLB | non vérifié | à exclure |

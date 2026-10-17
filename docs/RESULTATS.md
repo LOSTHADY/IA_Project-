@@ -667,3 +667,15 @@ même plus proches du quotidien que les griots, n'améliorent pas la
 compréhension de cette parole-là : il faut des paires du bon domaine. Le
 quota de Colab s'est arrêté pendant les contrôles écrits ; la décision (refus
 sur le dev) sera consignée à la prochaine exécution.
+
+**Quatrième tour, préparé (§9d)** : des paires du bon domaine, sans les
+écrire à la main. Un professeur, traducteur ouvert plus gros que le nôtre
+(NLLB 3.3B, NLLB 1.3B distillé ou MADLAD-400 3B), traduit en français du
+bambara parlé réel : 107 725 segments de conversation d'AfVoices une fois
+écartés ceux où un passage manque (`[?]`, `[cs]`), plus le sous-ensemble
+relu de Kunkado. 30 000 de ces paires, filtrées, entraînent la v4 à partir
+de la v1, avec un rappel de Bayelemabaga. Deux garde-fous : un professeur
+n'est retenu que s'il traduit les transcriptions de Soloni mieux que la v1
+sur le dev maison, sinon rien n'est entraîné ; la v4 n'entre en service
+que si elle fait mieux sur le test maison. Les traducteurs commerciaux en
+ligne sont exclus comme professeurs (RECHERCHE.md, licences).

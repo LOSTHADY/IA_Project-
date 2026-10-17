@@ -1,6 +1,7 @@
 """Atelier de données (eval/atelier.py) et son application (app/atelier_app.py)."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -476,6 +477,28 @@ def _rapport_mt(dossier: Path, nom: str, juste: float) -> None:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
 
 
+_CHEMINS_COLAB = ("/content/donnees-v3", "/content/nllb-bm2fr-v3", "/content/nllb-bm2fr-v4",
+                  "/content/donnees-v4", "/content/maison-dev.jsonl", "/content/assemblage-")
+
+
+def _au_disque(code: str, tmp_path: Path) -> str:
+    """Les chemins du disque de Colab, dans le dossier du test."""
+    for chemin in _CHEMINS_COLAB:
+        code = code.replace(chemin, str(tmp_path / Path(chemin).name))
+    return code
+
+
+def _outils_de_jugement(ns: dict, tmp_path: Path) -> list:
+    """La cellule commune à §9c et §9d (juger_bm2fr) ; ses commandes ne sont
+    pas lancées, mais notées."""
+    [outils] = [c for c in _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+                if "def juger_bm2fr(" in c]
+    exec(_sans_shell(_au_disque(outils, tmp_path)), ns)
+    lancees = []
+    ns["lancer"] = lambda *args: lancees.append(args) or True
+    return lancees
+
+
 @pytest.mark.parametrize("bayelemabaga_v3, dev_v3, promu", [(0.8, 0.8, True), (0.3, 0.8, False),
                                                        (0.8, 0.45, False)])
 def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
@@ -510,11 +533,8 @@ def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
               RAPPORT_EN_SERVICE=str(out / "maison-assemblages" / "Whisper-NLLB-v1"
                                      / "cascade-20261017-090000.json"))
     ns["EN_SERVICE"] = ns["en_service"]()
-    code = cellule
-    for chemin in ("/content/donnees-v3", "/content/nllb-bm2fr-v3", "/content/maison-dev.jsonl",
-                   "/content/assemblage-v3.json"):
-        code = code.replace(chemin, str(tmp_path / Path(chemin).name))
-    exec(_sans_shell(code), ns)
+    _outils_de_jugement(ns, tmp_path)
+    exec(_sans_shell(_au_disque(cellule, tmp_path)), ns)
 
     dev = (tmp_path / "maison-dev.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(dev) == 40 and json.loads(dev[0]) == {"bm": "a bɛ taa", "fr": PHRASES_MAISON[0]}
@@ -533,6 +553,122 @@ def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
         assert "régression sur chrF++ bm→fr" in sortie and retenu["bm2fr"] == "nllb-v1"
         assert cfg["mt_in"]["model_id"] == "nllb-v1"
     assert retenu["historique"][-1]["maillon"] == "bambara → français (v3)"
+
+
+def _cellules_9d() -> list[str]:
+    cellules = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+    k = next(i for i, c in enumerate(cellules) if c.startswith("import glob, json, os, shutil\nfrom datetime"))
+    return cellules[k:k + 3]  # professeurs, traduction, v4
+
+
+def _ns_9d(tmp_path: Path) -> dict:
+    """Le notebook après §9a : Whisper + NLLB v1 en service, mesuré sur le
+    jeu maison (dev et test à 50 %)."""
+    cellules = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+    [aides] = [c for c in cellules if c.startswith("# Modèle final")]
+    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
+    ckpt.mkdir(parents=True, exist_ok=True)
+    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v1", {"dev": 0.5, "test": 0.5})
+    service = out / "maison-assemblages" / "Whisper-NLLB-v1" / "cascade-20261017-090000.json"
+    os.utime(service, (1_000_000_000, 1_000_000_000))  # plus ancien que les mesures suivantes
+    prises = tmp_path / "dire.jsonl"
+    prises.write_text("{}\n")
+    os.utime(prises, (1_000_000_000, 1_000_000_000))
+    ns = {"CKPT": str(ckpt), "OUT": str(out)}
+    exec(_sans_shell(aides), ns)
+    ns.update(chemins=lambda: ("whisper", "nllb-v1", "fr2bm-v1"), a_jour=lambda *a, **k: True,
+              place_drive=lambda go: None, CFG=str(tmp_path / "assistant.json"),
+              PROFESSEUR=True, PAIRES_PROFESSEUR=30_000, PRISES=str(prises),
+              MAISON="maison.jsonl", NLLB_FR2BM="fr2bm-v1", RAPPORT_EN_SERVICE=str(service))
+    ns["EN_SERVICE"] = ns["en_service"]()
+    return ns
+
+
+@pytest.mark.parametrize("dev_professeur, retenu", [(0.8, True), (0.5, False)])
+def test_notebook_phase3_professeur_retenu_seulement_s_il_traduit_mieux_ta_voix(
+        tmp_path, monkeypatch, capsys, dev_professeur, retenu):
+    """§9d, étape 1 : le meilleur professeur sur le dev n'est retenu que s'il
+    bat le modèle en service de façon établie ; sinon rien n'est traduit ni
+    entraîné. Les professeurs écartés libèrent le disque."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    ns = _ns_9d(tmp_path)
+    profs = tmp_path / "out" / "professeurs"
+    for dossier, juste in (("Whisper-NLLB-3.3B", dev_professeur), ("Whisper-NLLB-1.3B-distillé", 0.45),
+                           ("Whisper-MADLAD-3B", 0.4), ("Whisper-NLLB-v1-témoin-même-script", 0.5)):
+        _rapport_maison(profs / dossier, {"dev": juste, "test": 0.5})
+    cache = tmp_path / "home" / ".cache" / "huggingface" / "hub"
+    modeles = ("facebook--nllb-200-3.3B", "facebook--nllb-200-distilled-1.3B",
+               "google--madlad400-3b-mt")
+    for m in modeles:
+        (cache / f"models--{m}").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    exec(_sans_shell(_cellules_9d()[0]), ns)
+    sortie = capsys.readouterr().out
+    # Tous mesurés sans rien relancer (mesures plus récentes que la reconnaissance).
+    assert "traduction de tes phrases" not in sortie and "⚠️" not in sortie
+    assert "| NLLB v1 (témoin, même script) | " in sortie and "| NLLB v1 (en service, §9a) | " in sortie
+    choix = json.loads((profs / "choix.json").read_text())
+    restants = {p.name for p in cache.iterdir()}
+    if retenu:
+        assert ns["PROF"] == ("NLLB 3.3B", "facebook/nllb-200-3.3B")
+        assert "Professeur retenu : NLLB 3.3B" in sortie and choix["retenu"] == "NLLB 3.3B"
+        assert restants == {"models--facebook--nllb-200-3.3B"}
+        assert ns["PAIRES_PROF"].endswith("professeur/paires-NLLB-3.3B.jsonl")
+    else:
+        assert ns["PROF"] is None and ns["PAIRES_PROF"] is None and choix["retenu"] is None
+        assert "on s'arrête là, sans entraînement" in sortie and "(le meilleur, NLLB 3.3B : +0.0" in sortie
+        assert restants == set()
+        for cellule in _cellules_9d()[1:]:
+            exec(_sans_shell(cellule), ns)
+        assert "rien à traduire" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("test_v4, promu", [(0.8, True), (0.5, False)])
+def test_notebook_phase3_v4_jugee_comme_la_v3(tmp_path, capsys, test_v4, promu):
+    """§9d, étapes 3 et 4 : pas d'entraînement tant que la traduction n'est pas
+    finie ; la v4 n'entre en service que si elle fait mieux sur le test."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    ns = _ns_9d(tmp_path)
+    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
+    lancees = _outils_de_jugement(ns, tmp_path)
+    prof_dir = tmp_path / "professeur"
+    prof_dir.mkdir()
+    corpus, paires = prof_dir / "bm.jsonl", prof_dir / "paires-NLLB-3.3B.jsonl"
+    corpus.write_text("{}\n{}\n{}\n")
+    paires.write_text("{}\n{}\n")
+    ns.update(PROF=("NLLB 3.3B", "facebook/nllb-200-3.3B"), CORPUS=str(corpus),
+              PAIRES_PROF=str(paires))
+    v4 = _au_disque(_cellules_9d()[2], tmp_path)
+
+    exec(_sans_shell(v4), ns)
+    assert "Traduction inachevée (2/3)" in capsys.readouterr().out
+    assert not (ckpt / "retenu.json").exists()
+
+    paires.write_text("{}\n{}\n{}\n")
+    (ckpt / "nllb-bm2fr-v4").mkdir()
+    (ckpt / "nllb-bm2fr-v4" / "model.safetensors").write_bytes(b"")
+    _rapport_maison(out / "maison-assemblages" / "Whisper-NLLB-v4", {"dev": 0.8, "test": test_v4})
+    for corpus_ecrit in ("Bayelemabaga", "MAFAND"):
+        _rapport_mt(out / "controles", f"controle {corpus_ecrit} nllb-v1", 0.8)
+        _rapport_mt(out / "controles", f"controle {corpus_ecrit} nllb-bm2fr-v4", 0.8)
+    exec(_sans_shell(v4), ns)
+    sortie = capsys.readouterr().out
+    assert "Dev maison : 40 énoncés transcrits par Whisper" in sortie
+    retenu = json.loads((ckpt / "retenu.json").read_text())
+    assert retenu["historique"][-1]["maillon"] == "bambara → français (v4)"
+    assert [a[:2] for a in lancees] == [("scripts/donnees_v3.py", "--out")]  # MAFAND pour le contrôle
+    cfg = json.loads((tmp_path / "assistant.json").read_text())
+    if promu:
+        assert "**Promu : Whisper + NLLB v4 remplace Whisper + NLLB v1.**" in sortie
+        assert retenu["bm2fr"] == cfg["mt_in"]["model_id"] == str(ckpt / "nllb-bm2fr-v4")
+        assert ns["RAPPORT_EN_SERVICE"].endswith("Whisper-NLLB-v4/cascade-20261017-090000.json")
+        assert "En service : Whisper + NLLB v4" in sortie
+    else:
+        assert "**Refusé : Whisper + NLLB v1 reste en service.**" in sortie
+        assert retenu["bm2fr"] == cfg["mt_in"]["model_id"] == "nllb-v1"
 
 
 @pytest.mark.parametrize("retenu, cpu", [(None, True), ("soloni", True), ("soloni", False)])

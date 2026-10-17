@@ -205,6 +205,11 @@ qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliqué
 5. **Le sens français → bambara**, sans référence bambara dans le jeu maison,
    change seulement si les jugements à l'aveugle de l'atelier le préfèrent
    (test du signe).
+6. **Un professeur** (distillation, §9d) ne fabrique des données que s'il
+   traduit ce que la reconnaissance a entendu mieux que le modèle en
+   service, de façon établie sur le dev (`scripts/professeurs.py`) : un
+   professeur moins bon n'apprendrait rien à l'élève. Le modèle obtenu
+   passe ensuite par les points 3 et 4 comme les autres.
 
 Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
 le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le
