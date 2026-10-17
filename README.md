@@ -262,7 +262,9 @@ for f in tests/test_*.py; do python -m pytest "$f" -q; done
 Un processus par module : lancée d'un bloc (`pytest tests/`), la suite
 plante par intermittence sur une corruption du tas native, toujours pendant
 l'utilisation de CTranslate2, et jamais module par module. La cause n'est
-pas identifiée. Les tests sont lancés automatiquement à chaque push par
+pas identifiée. Le même défaut fait parfois planter Python à sa sortie,
+tests passés : `tests/conftest.py` sort alors directement avec le vrai
+résultat. Les tests sont lancés automatiquement à chaque push par
 GitHub Actions ([`tests.yml`](.github/workflows/tests.yml)).
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,
