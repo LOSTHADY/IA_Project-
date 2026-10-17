@@ -319,7 +319,8 @@ def _code(nb_path: Path) -> list[str]:
     return ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
 
 
-@pytest.mark.parametrize("nb_path", [NB, ROOT / "notebooks" / "phase3_finetuning.ipynb"])
+@pytest.mark.parametrize("nb_path", [NB, ROOT / "notebooks" / "phase3_finetuning.ipynb",
+                                     ROOT / "notebooks" / "assistant.ipynb"])
 def test_notebook_se_compile_sans_apostrophe_dans_les_commandes(nb_path):
     """« Tout exécuter » s'arrête à la première erreur ; et IPython ne
     remplace pas $VAR quand une apostrophe suit sur la ligne."""
@@ -532,3 +533,40 @@ def test_notebook_phase3_v3_en_service_seulement_si_meilleure(tmp_path, capsys,
         assert "régression sur chrF++ bm→fr" in sortie and retenu["bm2fr"] == "nllb-v1"
         assert cfg["mt_in"]["model_id"] == "nllb-v1"
     assert retenu["historique"][-1]["maillon"] == "bambara → français (v3)"
+
+
+@pytest.mark.parametrize("retenu, cpu", [(None, True), ("soloni", True), ("soloni", False)])
+def test_notebook_assistant_charge_ce_qui_est_en_service(tmp_path, monkeypatch, retenu, cpu):
+    """La démo seule : l'assemblage de retenu.json (Whisper + v1 sans lui),
+    sur GPU s'il y en a un, sinon sur CPU avec des réponses plus courtes ;
+    le fichier produit est une configuration valide."""
+    torch = pytest.importorskip("torch")
+    from bambara_voice.config import load_config
+
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "assistant.ipynb") if "lire_retenu" in c]
+    ckpt = tmp_path / "modeles"
+    ckpt.mkdir()
+    if retenu:
+        (ckpt / "retenu.json").write_text(json.dumps({
+            "asr": {"model_id": "RobotsMali/soloni-114m-tdt-ctc-v3", "kind": "nemo"},
+            "nom_asr": "Soloni", "bm2fr": str(ckpt / "nllb-bm2fr"), "nom_bm2fr": "NLLB v1",
+            "fr2bm": str(ckpt / "nllb-fr2bm"), "nom_fr2bm": "NLLB v1", "historique": []}))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: not cpu)
+    import huggingface_hub
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download",
+                        lambda depot, fichier: str(tmp_path / fichier))
+    code = (cellule.replace('from google.colab import drive\ndrive.mount("/content/drive")\n', "")
+            .replace("/content/drive/MyDrive/bambara/modeles", str(ckpt))
+            .replace("/content/assistant.json", str(tmp_path / "assistant.json")))
+    ns: dict = {}
+    exec(code, ns)
+    cfg = json.loads((tmp_path / "assistant.json").read_text())
+    assert cfg["device"] == ("cpu" if cpu else "cuda")
+    assert cfg["asr"]["model_id"] == ("RobotsMali/soloni-114m-tdt-ctc-v3" if retenu
+                                      else str(ckpt / "whisper-small-bm"))
+    assert ("llm" in cfg) == cpu
+    pipeline = load_config(tmp_path / "assistant.json")
+    assert pipeline.mt_in.model_id == str(ckpt / "nllb-bm2fr")
+    if cpu:  # le LLM allégé (GGUF, llama.cpp) : 1 Go au lieu de 6
+        assert pipeline.llm.backend == "llamacpp"
+        assert pipeline.llm.gguf_path == str(tmp_path / "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf")

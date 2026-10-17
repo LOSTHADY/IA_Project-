@@ -227,7 +227,7 @@ bambara_voice/     pipeline d'inférence
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
 app/               démo Gradio, application de collecte, atelier de données
-notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données)
+notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 docs/ATELIER.md    atelier de données : dire, lire, juger, lexique
