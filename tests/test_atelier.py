@@ -321,7 +321,8 @@ def _code(nb_path: Path) -> list[str]:
 
 
 @pytest.mark.parametrize("nb_path", [NB, ROOT / "notebooks" / "phase3_finetuning.ipynb",
-                                     ROOT / "notebooks" / "assistant.ipynb"])
+                                     ROOT / "notebooks" / "assistant.ipynb",
+                                     ROOT / "notebooks" / "v4_test.ipynb"])
 def test_notebook_se_compile_sans_apostrophe_dans_les_commandes(nb_path):
     """« Tout exécuter » s'arrête à la première erreur ; et IPython ne
     remplace pas $VAR quand une apostrophe suit sur la ligne."""
@@ -669,6 +670,66 @@ def test_notebook_phase3_v4_jugee_comme_la_v3(tmp_path, capsys, test_v4, promu):
     else:
         assert "**Refusé : Whisper + NLLB v1 reste en service.**" in sortie
         assert retenu["bm2fr"] == cfg["mt_in"]["model_id"] == "nllb-v1"
+
+
+def test_notebook_v4_reprend_les_cellules_de_la_phase3():
+    """notebooks/v4_test.ipynb ne fait que le §9d : ses cellules de travail
+    sont celles de la phase 3, à l'identique (une correction faite d'un côté
+    ne doit pas manquer de l'autre)."""
+    phase3 = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb")
+    v4 = _code(ROOT / "notebooks" / "v4_test.ipynb")
+    communes = [c for c in v4 if c in phase3]
+    for debut in ("# Branche de travail", "# Modèle final", "import glob, json, os, shutil, subprocess",
+                  "import glob, json, os, shutil\nfrom datetime", "from pathlib import Path\nif PROF",
+                  "import os\nfrom pathlib import Path\nB2F_V4"):
+        assert any(c.startswith(debut) for c in communes), debut
+    # Dans l'ordre de la phase 3.
+    assert [phase3.index(c) for c in communes] == sorted(phase3.index(c) for c in communes)
+
+
+def test_notebook_v4_sur_le_drive_du_compte_de_secours(tmp_path, capsys):
+    """Sans le raccourci vers le dossier du compte principal, la cellule du
+    Drive arrête tout avec la marche à suivre ; avec lui, la mesure du
+    modèle en service sur le jeu maison est reprise telle quelle."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    cellules = _code(ROOT / "notebooks" / "v4_test.ipynb")
+    [montage] = [c for c in cellules if c.startswith("from google.colab import drive")]
+    [service] = [c for c in cellules if c.startswith("import glob, json, os\nfrom eval.promotion import score")]
+    montage = (montage.replace('from google.colab import drive\ndrive.mount("/content/drive")\n', "")
+               .replace("/content/drive/MyDrive/bambara", str(tmp_path / "bambara"))
+               .replace("shutil.disk_usage('/content/drive')", f"shutil.disk_usage({str(tmp_path)!r})"))
+    ns: dict = {}
+    with pytest.raises(RuntimeError, match="Ajouter un raccourci"):
+        exec(montage, ns)
+
+    ckpt = tmp_path / "bambara" / "modeles"
+    (ckpt / "nllb-bm2fr").mkdir(parents=True)
+    (ckpt / "nllb-bm2fr" / "model.safetensors").write_bytes(b"")
+    (ckpt / "retenu.json").write_text(json.dumps({
+        "asr": {"model_id": "soloni", "kind": "nemo"}, "nom_asr": "Soloni",
+        "bm2fr": str(ckpt / "nllb-bm2fr"), "nom_bm2fr": "NLLB v1", "fr2bm": "fr2bm-v1",
+        "nom_fr2bm": "NLLB v1", "historique": []}))
+    exec(montage, ns)
+    assert "Modèles trouvés" in capsys.readouterr().out
+    atelier = Path(ns["ATELIER"])
+    atelier.mkdir(parents=True)
+    (atelier / "dire.jsonl").write_text("{}\n")
+    os.utime(atelier / "dire.jsonl", (1_000_000_000, 1_000_000_000))
+    _rapport_maison(Path(ns["OUT"]) / "maison-assemblages" / "Soloni-NLLB-v1",
+                    {"dev": 0.5, "test": 0.75})
+    [aides] = [c for c in cellules if c.startswith("# Modèle final")]
+    exec(_sans_shell(aides), ns)
+    ns["chemins"] = lambda: ("whisper", str(ckpt / "nllb-bm2fr"), "fr2bm-v1")
+    exec(_sans_shell(service.replace("/content/assistant-affine.json",
+                                     str(tmp_path / "assistant.json"))), ns)
+    sortie = capsys.readouterr().out
+    assert "mesure sur tes phrases" not in sortie
+    assert ns["RAPPORT_EN_SERVICE"].endswith("Soloni-NLLB-v1/cascade-20261017-090000.json")
+    assert "En service : Soloni + NLLB v1 ; chrF++ sur ta voix : dev " in sortie
+    cfg = json.loads((tmp_path / "assistant.json").read_text())
+    assert cfg["asr"] == {"model_id": "soloni", "kind": "nemo"}
+    assert cfg["mt_in"]["model_id"] == str(ckpt / "nllb-bm2fr")
 
 
 @pytest.mark.parametrize("retenu, cpu", [(None, True), ("soloni", True), ("soloni", False)])
