@@ -245,6 +245,22 @@ def test_exports_et_jeu_de_test_sans_transcription(atelier):
     assert d["n"] == 4 and d["part_code_switching"] == 0.25
     assert out["lexique"].read_text(encoding="utf-8").splitlines()[1].startswith("wai\tsalut")
 
+    # Les lectures : texte exact, d'où le WER de la reconnaissance.
+    lue = {"id": "lu-0001", "bm": "A bɛ taa sugu la sisan.", "source": "test"}
+    atelier.enregistrer("lire", "spk-01", lue, data, sr)
+    [l] = load_testset(atelier.exporter()["testset_lire"])
+    assert l.transcript_bm == "A bɛ taa sugu la sisan." and l.register == "lu"
+    assert l.translation_fr == "" and l.audio_path(out["testset"].parent).exists()
+
+
+def test_usage_ne_touche_pas_a_la_moitie_test():
+    from eval.atelier import charger_phrases_a_dire, partition, usage
+    ids = [p["id"] for p in charger_phrases_a_dire(ROOT / "data" / "atelier" / "a_dire.json")]
+    for i in ids:
+        assert (usage(i) == "test") == (partition(i) == "test")
+    compte = {u: sum(usage(i) == u for i in ids) for u in ("apprentissage", "choix", "test")}
+    assert compte == {"apprentissage": 120, "choix": 33, "test": 147}
+
 
 def test_jeu_de_test_exige_une_reference(tmp_path):
     f = tmp_path / "t.jsonl"
@@ -322,7 +338,8 @@ def _code(nb_path: Path) -> list[str]:
 
 @pytest.mark.parametrize("nb_path", [NB, ROOT / "notebooks" / "phase3_finetuning.ipynb",
                                      ROOT / "notebooks" / "assistant.ipynb",
-                                     ROOT / "notebooks" / "v4_test.ipynb"])
+                                     ROOT / "notebooks" / "v4_test.ipynb",
+                                     ROOT / "notebooks" / "progres.ipynb"])
 def test_notebook_se_compile_sans_apostrophe_dans_les_commandes(nb_path):
     """« Tout exécuter » s'arrête à la première erreur ; et IPython ne
     remplace pas $VAR quand une apostrophe suit sur la ligne."""
@@ -730,6 +747,85 @@ def test_notebook_v4_sur_le_drive_du_compte_de_secours(tmp_path, capsys):
     cfg = json.loads((tmp_path / "assistant.json").read_text())
     assert cfg["asr"] == {"model_id": "soloni", "kind": "nemo"}
     assert cfg["mt_in"]["model_id"] == str(ckpt / "nllb-bm2fr")
+
+
+def test_notebook_progres_reprend_les_cellules_communes():
+    """notebooks/progres.ipynb partage ses cellules de travail avec la phase 3
+    et le notebook V4, à l'identique."""
+    progres = _code(ROOT / "notebooks" / "progres.ipynb")
+    autres = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb") + _code(ROOT / "notebooks" / "v4_test.ipynb")
+    for debut in ("# Branche de travail", "# Modèle final", "import glob, json, os, shutil, subprocess",
+                  "import glob, json, os\nfrom eval.promotion import score"):
+        [c] = [c for c in progres if c.startswith(debut)]
+        assert c in autres, debut
+
+
+@pytest.mark.parametrize("test_maison, promu", [(0.8, True), (0.5, False)])
+def test_notebook_progres_apprend_de_ta_voix(tmp_path, capsys, test_maison, promu):
+    """Partie 2 : paires tirées des phrases dites (jamais du test), version
+    « maison-N » entraînée depuis NLLB v1, en service seulement si elle fait
+    mieux sur le test maison."""
+    pytest.importorskip("transformers")
+    pytest.importorskip("sacrebleu")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paires_maison
+    from eval.atelier import usage
+
+    ns = _ns_9d(tmp_path)
+    out, ckpt = tmp_path / "out", tmp_path / "ckpt"
+    lancees = _outils_de_jugement(ns, tmp_path)
+    # Les 80 prises du rapport en service, rattachées à de vraies phrases.
+    service = Path(ns["RAPPORT_EN_SERVICE"])
+    rows = [json.loads(x) for x in service.with_suffix(".details.jsonl").read_text().splitlines()]
+    # Plus 60 prises du dev, mal comprises, pour avoir de quoi apprendre.
+    rows += [{"item": f"di-{80 + k:05d}", "source_bm": "a bɛ taa", "partition": "dev",
+              "source_fr": "il est parti hier", "ref_translation_fr": PHRASES_MAISON[k % 40],
+              "speaker": "spk-00"} for k in range(60)]
+    service.with_suffix(".details.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False)
+                                                               for r in rows))
+    os.utime(service, (1_000_000_000, 1_000_000_000))
+    ids = [p["id"] for p in charger_phrases_a_dire(ROOT / "data" / "atelier" / "a_dire.json")]
+    dev_ids = [i for i in ids if usage(i) != "test"]
+    test_ids = [i for i in ids if usage(i) == "test"]
+    prises = [{"id": r["item"], "prompt_id": (dev_ids if r["partition"] == "dev" else test_ids)[k % 100]}
+              for k, r in enumerate(rows)]
+    Path(ns["PRISES"]).write_text("\n".join(json.dumps(p) for p in prises))
+    os.utime(ns["PRISES"], (1_000_000_000, 1_000_000_000))
+    paires = paires_maison.paires(service, Path(ns["PRISES"]))
+    n = len(paires["apprentissage"])
+    assert n >= 50 and paires["choix"] and all(usage(x["prompt_id"]) != "test"
+                                               for v in paires.values() for x in v)
+
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "progres.ipynb") if "paires_maison.py" in c]
+    code = _sans_shell(cellule.replace("/content/paires-maison", str(tmp_path / "paires-maison"))
+                       .replace("/content/nllb-bm2fr-", str(tmp_path / "nllb-bm2fr-")))
+    # Pas assez de prises : rien n'est entraîné.
+    paires_maison.ecrire(tmp_path / "paires-maison", {"apprentissage": paires["apprentissage"][:10],
+                                                      "choix": paires["choix"]})
+    exec(code, ns)
+    assert "10 prises à apprendre : trop peu" in capsys.readouterr().out
+
+    paires_maison.ecrire(tmp_path / "paires-maison", paires)
+    version = f"maison-{n}"
+    (ckpt / f"nllb-bm2fr-{version}").mkdir()
+    (ckpt / f"nllb-bm2fr-{version}" / "model.safetensors").write_bytes(b"")
+    _rapport_maison(out / "maison-assemblages" / f"Whisper-NLLB-{version}",
+                    {"dev": 0.8, "test": test_maison})
+    for corpus_ecrit in ("Bayelemabaga", "MAFAND"):
+        _rapport_mt(out / "controles", f"controle {corpus_ecrit} nllb-v1", 0.8)
+        _rapport_mt(out / "controles", f"controle {corpus_ecrit} nllb-bm2fr-{version}", 0.8)
+    exec(code, ns)
+    sortie = capsys.readouterr().out
+    assert ns["VERSION"] == version and ns["DEPART"] == "nllb-v1"
+    retenu = json.loads((ckpt / "retenu.json").read_text())
+    assert retenu["historique"][-1]["maillon"] == f"bambara → français ({version})"
+    assert [a[:2] for a in lancees] == [("scripts/donnees_v3.py", "--out")]
+    if promu:
+        assert f"**Promu : Whisper + NLLB {version} remplace Whisper + NLLB v1.**" in sortie
+        assert retenu["bm2fr"] == str(ckpt / f"nllb-bm2fr-{version}")
+    else:
+        assert "**Refusé : Whisper + NLLB v1 reste en service.**" in sortie
+        assert retenu["bm2fr"] == "nllb-v1"
 
 
 @pytest.mark.parametrize("retenu, cpu", [(None, True), ("soloni", True), ("soloni", False)])

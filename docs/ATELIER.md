@@ -160,6 +160,8 @@ le dossier de l'atelier :
 
   Avec plusieurs locuteurs, les IC sont tirés par locuteur (cf.
   `eval/significance.py`) : 8 locuteurs au moins pour qu'ils soient fiables.
+- `testset-lire.jsonl` : les lectures comme jeu de test de la
+  reconnaissance (WER sur ces voix, `notebooks/progres.ipynb`).
 - `lecture-export.jsonl` : audio et texte exact. Une heure (l'objectif
   affiché) est l'ordre de grandeur qu'il faut pour affiner une voix de
   synthèse MMS ; c'est aussi de l'entraînement pour la reconnaissance.
@@ -179,6 +181,7 @@ lecture.jsonl     les phrases bambara à lire
 lots/*.jsonl      les paires à juger
 jugements.jsonl   les choix
 lexique.jsonl     le lexique
+comprehension.jsonl  notes « même sens / à moitié / faux » (progres.ipynb)
 ```
 
 Audio en WAV mono 16 kHz. Écritures atomiques : un fichier n'est jamais à

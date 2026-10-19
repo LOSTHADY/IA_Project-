@@ -210,6 +210,15 @@ qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliqué
    service, de façon établie sur le dev (`scripts/professeurs.py`) : un
    professeur moins bon n'apprendrait rien à l'élève. Le modèle obtenu
    passe ensuite par les points 3 et 4 comme les autres.
+7. **Apprendre de la voix des locuteurs** (`notebooks/progres.ipynb`) : les
+   phrases dites dans l'atelier deviennent des paires d'entraînement (ce que
+   la reconnaissance a entendu → la phrase française voulue). La moitié test
+   n'est jamais apprise ; le dev est coupé par phrase en « apprentissage »
+   (trois quarts) et « choix » (un quart, pour le checkpoint), par
+   `eval.atelier.usage`. Une telle version a vu une partie du dev : son
+   score de dev est flatté, et seul le test décide. Chaque séance
+   d'enregistrement ajoute des paires ; le test, lui, sert à chaque
+   décision et doit être renouvelé de temps en temps (nouvelles phrases).
 
 Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
 le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le

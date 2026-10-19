@@ -177,6 +177,12 @@ tour (§9d : un professeur ouvert traduit du bambara parlé, la v4 apprend),
 avec le stockage sur un second compte Google qui accède par un raccourci au
 dossier `bambara` du premier.
 
+[`notebooks/progres.ipynb`](notebooks/progres.ipynb) mesure la reconnaissance
+sur les lectures de l'atelier (texte exact, d'où le WER), entraîne le
+traducteur sur les phrases dites dans l'atelier (version « maison-N »,
+jugée sur la moitié test, jamais apprise), et recueille le jugement du
+locuteur sur ce qui a été compris (`eval/comprehension.py`).
+
 Si le bouton ne s'ouvre pas (le nom de branche contient des « / »), passer
 par Colab : *Fichier → Ouvrir un notebook → GitHub*, ou télécharger le
 fichier `.ipynb` depuis GitHub puis *Fichier → Importer un notebook*.
@@ -232,7 +238,7 @@ bambara_voice/     pipeline d'inférence
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
 app/               démo Gradio, application de collecte, atelier de données
-notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb)
+notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb, progrès : progres.ipynb)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 docs/ATELIER.md    atelier de données : dire, lire, juger, lexique

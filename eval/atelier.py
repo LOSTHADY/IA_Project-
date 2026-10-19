@@ -102,6 +102,17 @@ def partition(prompt_id: str) -> str:
     return "dev" if hashlib.sha1(prompt_id.encode("utf-8")).digest()[0] % 2 == 0 else "test"
 
 
+def usage(prompt_id: str) -> str:
+    """Ce qu'une phrase apporte quand on apprend de la voix des locuteurs :
+    « test » (la moitié test de `partition`, jamais apprise : c'est elle qui
+    juge), « choix » (un quart du dev, jamais appris non plus : il choisit le
+    checkpoint) ou « apprentissage » (le reste du dev). Fixé par la phrase,
+    comme `partition`, dont il ne change aucune moitié."""
+    if partition(prompt_id) == "test":
+        return "test"
+    return "choix" if hashlib.sha1(prompt_id.encode("utf-8")).digest()[1] % 4 == 0 else "apprentissage"
+
+
 def texte_fr(phrase: dict, interlocuteur: str = "ami") -> str:
     """Le français de référence pour cet interlocuteur : vouvoyé pour un
     inconnu ou une personne âgée, quand la phrase s'adresse à quelqu'un."""
@@ -575,6 +586,8 @@ class Atelier:
           WER, mais le chrF++ depuis l'audio, la mesure centrale) ;
         - `lecture-export.jsonl` : audio et texte bambara exact (voix,
           reconnaissance) ;
+        - `testset-lire.jsonl` : les mêmes lectures, jeu de test pour
+          `eval.run_eval` (WER de la reconnaissance sur ces voix) ;
         - `lexique.tsv`."""
         genres = {s.id: s.gender for s in self.locuteurs()}
         regions = {s.id: s.region for s in self.locuteurs()}
@@ -593,6 +606,14 @@ class Atelier:
                     "duration_s": p.duration_s} for p in self.prises("lire")]
         out["lecture"] = self.root / "lecture-export.jsonl"
         _write_jsonl(out["lecture"], lecture)
+        # Les lectures comme jeu de test de la reconnaissance : le texte lu est
+        # exact, d'où le WER de la reconnaissance sur ces voix.
+        lu = [{"id": p.id, "audio": p.audio, "transcript_bm": p.texte, "translation_fr": "",
+               "speaker": p.speaker, "gender": genres.get(p.speaker, ""),
+               "region": regions.get(p.speaker, ""), "register": "lu",
+               "duration_s": p.duration_s} for p in self.prises("lire")]
+        out["testset_lire"] = self.root / "testset-lire.jsonl"
+        _write_jsonl(out["testset_lire"], lu)
         out["lexique"] = self.root / "lexique.tsv"
         lignes = ["forme\tsens_fr\tequivalent_bm\ttype\texemple"]
         lignes += ["\t".join([m.forme, m.sens_fr, m.equivalent_bm, m.type, m.exemple])
