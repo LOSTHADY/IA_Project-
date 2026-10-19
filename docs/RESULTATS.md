@@ -665,17 +665,55 @@ Bayelemabaga, MAFAND, exemples du Bamadaba, GATITOS, Jeli-ASR), 2 époques,
 selon les étapes), sous les 27,8 de la v1 au §9a. Les données publiques,
 même plus proches du quotidien que les griots, n'améliorent pas la
 compréhension de cette parole-là : il faut des paires du bon domaine. Le
-quota de Colab s'est arrêté pendant les contrôles écrits ; la décision (refus
-sur le dev) sera consignée à la prochaine exécution.
+quota de Colab s'est arrêté pendant les contrôles écrits. Refus consigné le
+19 octobre : 26,9 sur le dev, contre 27,8 pour la v1.
 
-**Quatrième tour, préparé (§9d)** : des paires du bon domaine, sans les
-écrire à la main. Un professeur, traducteur ouvert plus gros que le nôtre
-(NLLB 3.3B, NLLB 1.3B distillé ou MADLAD-400 3B), traduit en français du
-bambara parlé réel : 107 725 segments de conversation d'AfVoices une fois
-écartés ceux où un passage manque (`[?]`, `[cs]`), plus le sous-ensemble
-relu de Kunkado. 30 000 de ces paires, filtrées, entraînent la v4 à partir
-de la v1, avec un rappel de Bayelemabaga. Deux garde-fous : un professeur
-n'est retenu que s'il traduit les transcriptions de Soloni mieux que la v1
-sur le dev maison, sinon rien n'est entraîné ; la v4 n'entre en service
-que si elle fait mieux sur le test maison. Les traducteurs commerciaux en
-ligne sont exclus comme professeurs (RECHERCHE.md, licences).
+### Reconnaissances de RobotsMali et professeurs (19 octobre)
+
+Même jeu maison (555 énoncés, 2 locuteurs). Le §9a, refait avec les deux
+autres reconnaissances de RobotsMali, ne change rien : aucun candidat ne
+fait mieux que Soloni + NLLB v1 sur le dev.
+
+| Assemblage | chrF++ dev | chrF++ test |
+|---|---|---|
+| Soloni + NLLB v1 (en service) | **27,8** | 28,2 |
+| Soloni, branche CTC + NLLB v1 | 27,7 | 29,4 |
+| Soloba + NLLB v1 | 27,5 | 28,1 |
+| Soloni + moyenne v1/v2 | 27,1 | 27,3 |
+| Soloni + NLLB v3 | 26,9 | 26,8 |
+| Soloni + NLLB v2 | 26,7 | 26,7 |
+| Whisper + NLLB v1 | 20,6 | 20,6 |
+
+La branche CTC de Soloni gagne 1,2 point sur le test mais pas sur le dev :
+la règle ne la retient pas, et ce serait choisir sur le test que de la
+retenir maintenant.
+
+**Professeurs (§9d)** : chacun traduit les mêmes transcriptions de Soloni
+que la v1 (chrF++ dev).
+
+| Traducteur | chrF++ dev |
+|---|---|
+| NLLB v1 (en service, mesure du §9a) | **27,8** |
+| NLLB v1, témoin passé par le script des professeurs | 27,8 |
+| NLLB-200 3.3B, non affiné | 27,2 |
+| NLLB-200 1.3B distillé, non affiné | 26,1 |
+| MADLAD-400 3B | 19,2 |
+
+- Le témoin retrouve exactement la mesure du §9a : la comparaison est fiable.
+- Aucun professeur ne fait mieux que la v1 (le meilleur, NLLB 3.3B :
+  −0,6 [−2,1 ; 0,9]) : la v4 n'a pas été entraînée, et aucune heure de GPU
+  n'a été dépensée pour rien. Notre NLLB 600M affiné vaut, sur cette parole,
+  un NLLB cinq fois plus gros non affiné.
+- **Tout plafonne vers 27–28** : quatre traducteurs affinés différemment (v1,
+  v2, v3, moyenne), deux modèles cinq fois plus gros, et trois
+  reconnaissances de RobotsMali tombent entre 26 et 28. Quand des modèles
+  aussi différents butent au même niveau, la limite est probablement
+  ailleurs que dans chacun d'eux : dans ce que la reconnaissance transmet
+  (les trois reconnaissances de RobotsMali ont appris sur les mêmes
+  corpus), ou dans la mesure elle-même. La référence est la phrase française
+  affichée, alors que la phrase est dite librement en bambara : une
+  compréhension juste mais formulée autrement est comptée comme une erreur
+  partielle, et le score d'un système parfait est inconnu.
+
+Les traducteurs commerciaux en ligne ont été exclus comme professeurs
+(RECHERCHE.md, licences).
