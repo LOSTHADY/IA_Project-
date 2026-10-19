@@ -228,6 +228,12 @@ qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliqué
    font mieux sur les phrases redites (test) sans dégrader les phrases jamais
    dites (`eval/redire.py`) ; les corrections du locuteur, elles, sont
    toujours retenues : c'est lui qui dit ce qu'il voulait dire.
+9. **L'étage de la voix** (`notebooks/voix.ipynb`) : Soloni affiné sur les
+   enregistrements au texte exact (lectures, tours corrigés), réparti une fois
+   pour toutes par phrase : 70 % pour apprendre, 15 % pour choisir le
+   checkpoint, 15 % pour le test. Deux conditions de mise en service : moins
+   d'erreurs sur les lectures de test, et une meilleure compréhension des
+   phrases du jeu maison (moitié test, avec le traducteur en service).
 
 Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
 le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le

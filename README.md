@@ -188,6 +188,13 @@ des traducteurs déjà entraînés (`eval/consensus.py`), et jugement du locuteu
 (sens compris ? bien entendu ?), qui dit si les erreurs viennent de la
 reconnaissance ou de la traduction.
 
+[`notebooks/voix.ipynb`](notebooks/voix.ipynb) travaille l'étage de la voix
+seul : Soloni affiné sur les enregistrements au texte exact de l'atelier
+(lectures, tours corrigés du mode Discuter ; `scripts/affiner_soloni.py`,
+d'après la recette de RobotsMali), mis en service seulement s'il fait moins
+d'erreurs sur des lectures jamais entendues et comprend mieux les phrases du
+jeu maison.
+
 L'assistant a aussi une **mémoire** (`bambara_voice/memoire.py`) : quand il
 comprend mal, le locuteur écrit dans la démo ce qu'il voulait dire et clique
 « Retiens-le » ; la phrase est comprise la fois suivante, sans

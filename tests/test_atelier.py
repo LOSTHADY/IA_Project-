@@ -340,7 +340,8 @@ def _code(nb_path: Path) -> list[str]:
                                      ROOT / "notebooks" / "assistant.ipynb",
                                      ROOT / "notebooks" / "v4_test.ipynb",
                                      ROOT / "notebooks" / "progres.ipynb",
-                                     ROOT / "notebooks" / "diagnostic.ipynb"])
+                                     ROOT / "notebooks" / "diagnostic.ipynb",
+                                     ROOT / "notebooks" / "voix.ipynb"])
 def test_notebook_se_compile_sans_apostrophe_dans_les_commandes(nb_path):
     """« Tout exécuter » s'arrête à la première erreur ; et IPython ne
     remplace pas $VAR quand une apostrophe suit sur la ligne."""
@@ -791,6 +792,53 @@ def test_notebook_diagnostic_consensus_des_traducteurs_deja_mesures(tmp_path, ca
     assert "Traducteurs : NLLB moyenne, NLLB v1, NLLB v2, NLLB 3.3B" in sortie
     assert "**Le consensus ne fait pas mieux**" in sortie
     assert json.loads((out / "consensus" / "decision.json").read_text())["promu"] is False
+
+
+def test_notebook_voix_reprend_les_cellules_communes():
+    voix = _code(ROOT / "notebooks" / "voix.ipynb")
+    autres = _code(ROOT / "notebooks" / "phase3_finetuning.ipynb") + _code(ROOT / "notebooks" / "progres.ipynb")
+    for debut in ("# Branche de travail", "# Modèle final", "from google.colab import drive",
+                  "import glob, json, os\nfrom eval.promotion import score"):
+        [c] = [c for c in voix if c.startswith(debut)]
+        assert c in autres, debut
+
+
+@pytest.mark.parametrize("wer_apres, maison, promu", [(20.0, 0.8, True), (35.0, 0.8, False),
+                                                      (20.0, 0.5, False)])
+def test_notebook_voix_soloni_affine_en_service_seulement_s_il_fait_mieux(
+        tmp_path, capsys, wer_apres, maison, promu):
+    """Deux conditions : moins d'erreurs sur les lectures jamais entendues, et
+    une meilleure compréhension des phrases du jeu maison (moitié test)."""
+    pytest.importorskip("sacrebleu")
+    ns = _ns_9d(tmp_path)
+    ckpt, out = tmp_path / "ckpt", tmp_path / "out"
+    dossier = ckpt / "soloni-perso-80"
+    dossier.mkdir(parents=True)
+    (dossier / "soloni-perso.nemo").write_bytes(b"")
+    (dossier / "rapport.json").write_text(json.dumps({
+        "wer_test_avant": {"n": 12, "wer": 30.0, "wer_releche": 25.0},
+        "wer_test_apres": {"n": 12, "wer": wer_apres, "wer_releche": wer_apres - 5}}))
+    _rapport_maison(out / "maison-assemblages" / "Soloni-perso-80-NLLB-v1",
+                    {"dev": maison, "test": maison})
+    ns.update(ESSAI=False, VERSION_VOIX="perso-80", DOSSIER_VOIX=str(dossier),
+              SOLONI_VOIX=str(dossier / "soloni-perso.nemo"), DEVICE="cpu",
+              TITULAIRE="Whisper + NLLB v1")
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "voix.ipynb")
+                 if "reconnaissance (voix)" in c]
+    exec(_sans_shell(cellule.replace("/content/assemblage-voix.json",
+                                     str(tmp_path / "assemblage-voix.json"))), ns)
+    sortie = capsys.readouterr().out
+    assert "WER 30.0 % → " in sortie
+    retenu = json.loads((ckpt / "retenu.json").read_text())
+    assert retenu["historique"][-1]["maillon"] == "reconnaissance (voix)"
+    if promu:
+        assert "**Promu : Soloni perso-80 + NLLB v1 remplace Whisper + NLLB v1.**" in sortie
+        assert retenu["asr"] == {"model_id": str(dossier / "soloni-perso.nemo"), "kind": "nemo"}
+        assert "En service : Soloni perso-80 + NLLB v1" in sortie
+    else:
+        assert "**Refusé" in sortie and retenu["nom_asr"] == "Whisper"
+        if wer_apres >= 30:
+            assert "pas moins d'erreurs sur les lectures de test" in sortie
 
 
 @pytest.mark.parametrize("test_maison, promu", [(0.8, True), (0.5, False)])
