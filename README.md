@@ -183,9 +183,10 @@ traducteur sur les phrases dites dans l'atelier (version « maison-N »,
 jugée sur la moitié test, jamais apprise), et recueille le jugement du
 locuteur sur ce qui a été compris (`eval/comprehension.py`).
 [`notebooks/diagnostic.ipynb`](notebooks/diagnostic.ipynb) n'en garde que les
-mesures, sans GPU : erreurs de la reconnaissance sur les lectures, et
-jugement du locuteur (sens compris ? bien entendu ?), qui dit si les erreurs
-viennent de la reconnaissance ou de la traduction.
+mesures, sans GPU : erreurs de la reconnaissance sur les lectures, consensus
+des traducteurs déjà entraînés (`eval/consensus.py`), et jugement du locuteur
+(sens compris ? bien entendu ?), qui dit si les erreurs viennent de la
+reconnaissance ou de la traduction.
 
 L'assistant a aussi une **mémoire** (`bambara_voice/memoire.py`) : quand il
 comprend mal, le locuteur écrit dans la démo ce qu'il voulait dire et clique

@@ -766,10 +766,31 @@ def test_notebook_diagnostic_ne_fait_que_mesurer():
     l'identique, sans entraînement ; l'appareil est détecté (CPU sans GPU)."""
     diagnostic = _code(ROOT / "notebooks" / "diagnostic.ipynb")
     progres = _code(ROOT / "notebooks" / "progres.ipynb")
-    assert all(c in progres for c in diagnostic)
+    assert all(c in progres for c in diagnostic if "mesurer_consensus" not in c)
     assert not any("finetune" in c or "juger_bm2fr(" in c for c in diagnostic)
     [service] = [c for c in diagnostic if c.startswith("import glob, json, os\nfrom eval.promotion")]
     assert '"device": DEVICE' in service and 'else "cpu"' in service
+
+
+def test_notebook_diagnostic_consensus_des_traducteurs_deja_mesures(tmp_path, capsys):
+    """Le consensus rassemble les rapports déjà écrits par la phase 3 (§9a,
+    §9c, §9d), sans le témoin, et le compare à la v1 sur le test."""
+    pytest.importorskip("sacrebleu")
+    ns = _ns_9d(tmp_path)
+    out = tmp_path / "out"
+    for dossier, juste in (("maison-assemblages/Whisper-NLLB-v2", 0.5),
+                           ("maison-assemblages/Whisper-NLLB-moyenne", 0.5),
+                           ("professeurs/Whisper-NLLB-3.3B", 0.5),
+                           ("professeurs/Whisper-NLLB-v1-témoin-même-script", 0.5),
+                           ("maison-assemblages/Whisper-CTC-NLLB-v1", 0.9)):
+        _rapport_maison(out / dossier, {"dev": juste, "test": juste})
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "diagnostic.ipynb")
+                 if "mesurer_consensus" in c]
+    exec(cellule, ns)
+    sortie = capsys.readouterr().out
+    assert "Traducteurs : NLLB moyenne, NLLB v1, NLLB v2, NLLB 3.3B" in sortie
+    assert "**Le consensus ne fait pas mieux**" in sortie
+    assert json.loads((out / "consensus" / "decision.json").read_text())["promu"] is False
 
 
 @pytest.mark.parametrize("test_maison, promu", [(0.8, True), (0.5, False)])
