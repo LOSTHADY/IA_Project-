@@ -57,6 +57,24 @@ def test_bilan_avec_intervalle(tmp_path):
     assert comprehension.wilson(0, 10)[0] == 0.0 and comprehension.wilson(10, 10)[1] == 1.0
 
 
+def test_d_ou_viennent_les_erreurs(tmp_path):
+    """Seconde question : la reconnaissance a-t-elle bien entendu ? Elle
+    partage les phrases mal comprises entre reconnaissance et traduction."""
+    notes = tmp_path / "c.jsonl"
+    for i, (sens, entendu) in enumerate([(2, 2)] * 5 + [(0, 0)] * 3 + [(1, 1)] * 2 + [(0, 2)] * 4):
+        comprehension.noter(notes, f"di-{i}", sens, "S", entendu)
+    comprehension.noter(notes, "di-99", 0, "S")              # sans la seconde réponse
+    b = comprehension.bilan(notes, "S")
+    assert b["erreurs"] == {"n": 9, "reconnaissance": 3, "les deux": 2, "traduction": 4}
+    md = comprehension.to_markdown(b)
+    assert "bien entendues, mal traduites (traduction) : 4" in md
+    with pytest.raises(ValueError):
+        comprehension.noter(notes, "di-0", 2, "S", 5)
+    rapport = _rapport(tmp_path / "r.json", [{"item": "di-1", "ref_translation_fr": "bonjour",
+                                              "source_fr": "salut", "source_bm": "i ni ce"}])
+    assert comprehension.a_juger(rapport, tmp_path / "vide.jsonl", "S")[0]["entendu"] == "i ni ce"
+
+
 def test_paires_de_ta_voix_jamais_tirees_du_test(tmp_path):
     import paires_maison
 
