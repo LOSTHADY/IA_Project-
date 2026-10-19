@@ -339,7 +339,8 @@ def _code(nb_path: Path) -> list[str]:
 @pytest.mark.parametrize("nb_path", [NB, ROOT / "notebooks" / "phase3_finetuning.ipynb",
                                      ROOT / "notebooks" / "assistant.ipynb",
                                      ROOT / "notebooks" / "v4_test.ipynb",
-                                     ROOT / "notebooks" / "progres.ipynb"])
+                                     ROOT / "notebooks" / "progres.ipynb",
+                                     ROOT / "notebooks" / "diagnostic.ipynb"])
 def test_notebook_se_compile_sans_apostrophe_dans_les_commandes(nb_path):
     """« Tout exécuter » s'arrête à la première erreur ; et IPython ne
     remplace pas $VAR quand une apostrophe suit sur la ligne."""
@@ -758,6 +759,17 @@ def test_notebook_progres_reprend_les_cellules_communes():
                   "import glob, json, os\nfrom eval.promotion import score"):
         [c] = [c for c in progres if c.startswith(debut)]
         assert c in autres, debut
+
+
+def test_notebook_diagnostic_ne_fait_que_mesurer():
+    """notebooks/diagnostic.ipynb : les cellules de mesure de progres, à
+    l'identique, sans entraînement ; l'appareil est détecté (CPU sans GPU)."""
+    diagnostic = _code(ROOT / "notebooks" / "diagnostic.ipynb")
+    progres = _code(ROOT / "notebooks" / "progres.ipynb")
+    assert all(c in progres for c in diagnostic)
+    assert not any("finetune" in c or "juger_bm2fr(" in c for c in diagnostic)
+    [service] = [c for c in diagnostic if c.startswith("import glob, json, os\nfrom eval.promotion")]
+    assert '"device": DEVICE' in service and 'else "cpu"' in service
 
 
 @pytest.mark.parametrize("test_maison, promu", [(0.8, True), (0.5, False)])
