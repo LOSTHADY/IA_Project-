@@ -283,6 +283,31 @@ def test_nemo_refuse_la_traduction(monkeypatch):
 
 
 
+def test_nemo_deux_propositions_une_par_decodeur(monkeypatch):
+    """Soloni (TDT et CTC) : deux propositions, celle du décodeur habituel
+    d'abord ; on revient ensuite au décodeur habituel."""
+    calls = _fake_nemo(monkeypatch, None)
+    sorties = {None: "i ni sɔgɔma", "rnnt": "i ni sɔgɔma", "ctc": "i ni sɔgɔma i ka kɛnɛ"}
+    etat = {"decodeur": None}
+    import sys as _sys
+    modele = _sys.modules["nemo.collections.asr.models"].ASRModel.from_pretrained("x")
+    Fake = type(modele)
+    Fake.change_decoding_strategy = lambda self, decoding_cfg=None, decoder_type=None: (
+        etat.update(decodeur=decoder_type), calls.setdefault("changements", []).append(decoder_type))
+    Fake.transcribe = lambda self, audio, batch_size=1, verbose=True: [_Hypothesis(
+        sorties[etat["decodeur"]])]
+    rec = SpeechRecognizer(ASRConfig(kind="nemo"))
+    assert rec.alternatives(AUDIO) == ["i ni sɔgɔma", "i ni sɔgɔma i ka kɛnɛ"]
+    assert calls["changements"] == ["ctc", "rnnt"]
+    # Les deux décodeurs d'accord : une seule proposition.
+    sorties["ctc"] = "i ni sɔgɔma"
+    assert rec.alternatives(AUDIO) == ["i ni sɔgɔma"]
+    # Soloba (CTC seul) : une seule, sans changer de décodeur.
+    calls2 = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")], tdt=False)
+    assert SpeechRecognizer(ASRConfig(kind="nemo")).alternatives(AUDIO) == ["a bɛ yen"]
+    assert "decoder" not in calls2
+
+
 @pytest.mark.parametrize("tdt", [True, False])
 def test_nemo_sur_gpu_graphes_cuda_coupes_seulement_pour_le_tdt(monkeypatch, tdt):
     """Soloni (TDT) : graphes CUDA du décodeur coupés. Soloba (CTC seul) :

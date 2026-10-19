@@ -808,6 +808,7 @@ def test_notebook_progres_apprend_de_ta_voix(tmp_path, capsys, test_maison, prom
     assert n >= 50 and paires["choix"] and all(usage(x["prompt_id"]) != "test"
                                                for v in paires.values() for x in v)
 
+    ns["ATELIER"] = str(tmp_path / "atelier")
     [cellule] = [c for c in _code(ROOT / "notebooks" / "progres.ipynb") if "paires_maison.py" in c]
     code = _sans_shell(cellule.replace("/content/paires-maison", str(tmp_path / "paires-maison"))
                        .replace("/content/nllb-bm2fr-", str(tmp_path / "nllb-bm2fr-")))

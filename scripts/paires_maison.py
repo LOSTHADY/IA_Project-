@@ -21,6 +21,12 @@ vont du même côté. Chaque séance d'enregistrement ajoute des paires : relanc
 après chaque séance donne un modèle entraîné sur plus de ta parole, jugé sur
 le même test.
 
+`--conversations` ajoute les tours du mode « Discuter » de l'atelier (parole
+libre, corrigée par le locuteur) : tous à l'apprentissage, car aucune phrase
+du test n'y est imposée. Chaque tour donne la paire « ce que la
+reconnaissance a entendu → le sens voulu », et, si le locuteur a confirmé ou
+corrigé le bambara, « bambara corrigé → sens voulu ».
+
 Écrit `DOSSIER/apprentissage/train.jsonl` (lisible par `--extra-dataset`) et
 `DOSSIER/choix.jsonl` (pour `--eval-file`). Ces paires viennent de ta voix :
 elles restent sur Drive, jamais dans le dépôt.
@@ -60,6 +66,23 @@ def paires(rapport: Path, prises: Path) -> dict[str, list[dict]]:
     return out
 
 
+def paires_conversations(conversations: Path) -> list[dict]:
+    """Les paires des tours du mode « Discuter » ; sans doublon."""
+    out, vues = [], set()
+    for t in _lignes(conversations):
+        fr = (t.get("compris") or "").strip()
+        entendus = [(t.get("entendu_auto") or [""])[0]]
+        if t.get("entendu_statut") in ("juste", "corrige"):
+            entendus.append(t.get("entendu_std") or "")
+        for bm in entendus:
+            bm = bm.strip()
+            if bm and fr and (bm, fr) not in vues:
+                vues.add((bm, fr))
+                out.append({"bm": bm, "fr": fr, "item": t["id"],
+                            "prompt_id": f"conversation:{t['id']}"})
+    return out
+
+
 def ecrire(dossier: Path, p: dict[str, list[dict]]) -> None:
     (dossier / "apprentissage").mkdir(parents=True, exist_ok=True)
     for chemin, lignes in ((dossier / "apprentissage" / "train.jsonl", p["apprentissage"]),
@@ -75,8 +98,12 @@ def main(argv: list[str] | None = None) -> None:
                    help="rapport eval.run_eval du jeu maison (reconnaissance en service)")
     a.add_argument("--prises", type=Path, required=True, help="dire.jsonl de l'atelier")
     a.add_argument("--out", type=Path, required=True)
+    a.add_argument("--conversations", type=Path, default=None,
+                   help="conversations.jsonl de l'atelier (mode Discuter), s'il existe")
     args = a.parse_args(argv)
     p = paires(args.rapport, args.prises)
+    if args.conversations and args.conversations.exists():
+        p["apprentissage"] += paires_conversations(args.conversations)
     ecrire(args.out, p)
     phrases = {k: len({x["prompt_id"] for x in v}) for k, v in p.items()}
     print(f"Apprentissage : {len(p['apprentissage'])} prises ({phrases['apprentissage']} phrases) ; "

@@ -13,7 +13,12 @@ l'écrire (docs/ATELIER.md) :
   Données de synthèse vocale (une voix) et de reconnaissance ;
 - **juger** : deux traductions d'une même phrase, à l'aveugle → préférence.
   Évaluation humaine (v1 contre v2, par exemple) ;
-- **lexique** : argot et mots d'emprunt, avec leur sens.
+- **lexique** : argot et mots d'emprunt, avec leur sens ;
+- **discuter** (mode entraînement) : on parle librement à l'assistant, puis
+  on choisit ou corrige ce qu'il a entendu (en bambara, orthographe ramenée
+  au standard par `bambara_voice.orthographe`) et ce qu'il a compris (en
+  français). Données de reconnaissance et de traduction, et mémoire de
+  l'assistant, en conversant.
 
 Toute la logique vit ici pour être testée sans interface ; l'application
 (`app/atelier_app.py`) n'est qu'une façade. Le dossier de l'atelier n'est
@@ -24,7 +29,9 @@ jamais versionné (la voix est une donnée personnelle, le dépôt est public) :
 - `passes.jsonl` : phrases passées (illisibles, gênantes…) ;
 - `lecture.jsonl` : phrases bambara à lire (`preparer_lecture`) ;
 - `lots/*.jsonl` : paires à juger (`preparer_lot`) ; `jugements.jsonl` ;
-- `lexique.jsonl`.
+- `lexique.jsonl` ;
+- `conversations.jsonl` : les tours du mode « discuter » ; `reponses.jsonl` :
+  les réponses de l'assistant jugées justes ou fausses.
 """
 
 from __future__ import annotations
@@ -290,6 +297,29 @@ class Jugement:
     recorded_at: str = ""
 
 
+STATUTS_ENTENDU = ("juste", "corrige", "inaudible")
+STATUTS_COMPRIS = ("juste", "corrige")
+
+
+@dataclass
+class Tour:
+    """Un tour du mode « discuter » : la personne parle librement, puis dit ce
+    que la reconnaissance aurait dû entendre et ce que la phrase voulait dire."""
+    id: str
+    speaker: str
+    audio: str
+    entendu_auto: list           # propositions de la reconnaissance, la première d'abord
+    entendu: str = ""            # choisi ou corrigé par la personne, tel qu'elle l'a écrit
+    entendu_std: str = ""        # le même, en orthographe standard
+    entendu_statut: str = ""     # une valeur de STATUTS_ENTENDU
+    compris_auto: str = ""       # le français proposé par l'assistant
+    compris: str = ""            # le sens voulu, confirmé ou corrigé
+    compris_statut: str = ""     # une valeur de STATUTS_COMPRIS
+    conditions: str = ""
+    duration_s: float = 0.0
+    recorded_at: str = ""
+
+
 @dataclass
 class Mot:
     id: str
@@ -481,6 +511,51 @@ class Atelier:
     def phrases_a_lire(self) -> list[dict]:
         return _read_jsonl(self._path("lecture.jsonl"))
 
+    # --- discuter (mode entraînement) ----------------------------------------
+
+    def tours(self, speaker: str | None = None) -> list[Tour]:
+        rows = [_from_dict(Tour, r) for r in _read_jsonl(self._path("conversations.jsonl"))]
+        return [t for t in rows if speaker is None or t.speaker == speaker]
+
+    def enregistrer_tour(self, speaker: str, audio: np.ndarray, sample_rate: int,
+                         entendu_auto: list[str], entendu: str, entendu_std: str,
+                         entendu_statut: str, compris_auto: str, compris: str,
+                         compris_statut: str, conditions: str = "") -> Tour:
+        """Écrit le WAV et la ligne d'un tour corrigé par la personne."""
+        if entendu_statut not in STATUTS_ENTENDU or compris_statut not in STATUTS_COMPRIS:
+            raise ValueError(f"statuts attendus : {STATUTS_ENTENDU}, {STATUTS_COMPRIS}")
+        if not compris.strip():
+            raise ValueError("il faut ce que la phrase voulait dire")
+        if not self.locuteur(speaker).consent:
+            raise ValueError(f"{speaker} n'a pas donné son consentement")
+        wav = to_mono_16k(audio, sample_rate)
+        if "enregistrement vide" in check_audio(wav):
+            raise ValueError("enregistrement vide : rien n'a été capté")
+
+        import soundfile as sf
+
+        with self._lock:
+            rows = _read_jsonl(self._path("conversations.jsonl"))
+            tid = _next_id([r["id"] for r in rows], "co-", 5)
+            rel = f"audio/{tid}.wav"
+            (self.root / "audio").mkdir(parents=True, exist_ok=True)
+            sf.write(str(self.root / rel), wav, SAMPLE_RATE, subtype="PCM_16")
+            tour = Tour(id=tid, speaker=speaker, audio=rel, entendu_auto=list(entendu_auto),
+                        entendu=entendu.strip(), entendu_std=entendu_std.strip(),
+                        entendu_statut=entendu_statut, compris_auto=compris_auto.strip(),
+                        compris=compris.strip(), compris_statut=compris_statut,
+                        conditions=conditions, duration_s=round(len(wav) / SAMPLE_RATE, 2),
+                        recorded_at=self._now())
+            self._append("conversations.jsonl", asdict(tour))
+        return tour
+
+    def juger_reponse(self, tour_id: str, juge: str, reponse_bm: str, juste: bool) -> None:
+        """La réponse de l'assistant à ce tour était-elle juste ?"""
+        with self._lock:
+            self._append("reponses.jsonl", {"tour": tour_id, "juge": juge,
+                                            "reponse_bm": reponse_bm, "juste": bool(juste),
+                                            "at": self._now()})
+
     # --- jugements ----------------------------------------------------------
 
     def lots(self) -> list[str]:
@@ -570,9 +645,14 @@ class Atelier:
                 "a_dire": len(phrases_dire),
                 "lues": len(self.prises("lire", s.id)),
                 "minutes_lues": self.minutes("lire", s.id),
+                "tours": len(self.tours(s.id)),
                 "jugements": sum(j.juge == s.id for j in self.jugements()),
             })
+        tours = self.tours()
         return {"locuteurs": par_locuteur,
+                "tours": {"total": len(tours),
+                          "entendu_corrige": sum(t.entendu_statut == "corrige" for t in tours),
+                          "compris_corrige": sum(t.compris_statut == "corrige" for t in tours)},
                 "par_interlocuteur": self.par_interlocuteur(),
                 "minutes": {"dire": self.minutes("dire"), "lire": self.minutes("lire")},
                 "phrases_a_lire": len(lecture), "lexique": len(self.lexique()),
@@ -588,6 +668,9 @@ class Atelier:
           reconnaissance) ;
         - `testset-lire.jsonl` : les mêmes lectures, jeu de test pour
           `eval.run_eval` (WER de la reconnaissance sur ces voix) ;
+        - `conversations-export.jsonl` : les tours du mode « discuter » dont
+          le bambara a été confirmé ou corrigé (audio, texte en orthographe
+          standard, sens voulu) : jamais du test ;
         - `lexique.tsv`."""
         genres = {s.id: s.gender for s in self.locuteurs()}
         regions = {s.id: s.region for s in self.locuteurs()}
@@ -614,6 +697,11 @@ class Atelier:
                "duration_s": p.duration_s} for p in self.prises("lire")]
         out["testset_lire"] = self.root / "testset-lire.jsonl"
         _write_jsonl(out["testset_lire"], lu)
+        out["conversations"] = self.root / "conversations-export.jsonl"
+        _write_jsonl(out["conversations"], [
+            {"audio": t.audio, "text": t.entendu_std, "fr": t.compris, "speaker": t.speaker,
+             "duration_s": t.duration_s} for t in self.tours()
+            if t.entendu_statut in ("juste", "corrige") and t.entendu_std])
         out["lexique"] = self.root / "lexique.tsv"
         lignes = ["forme\tsens_fr\tequivalent_bm\ttype\texemple"]
         lignes += ["\t".join([m.forme, m.sens_fr, m.equivalent_bm, m.type, m.exemple])

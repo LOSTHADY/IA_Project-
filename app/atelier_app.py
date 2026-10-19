@@ -1,12 +1,18 @@
-"""Atelier de données — dire, lire, juger, enrichir le lexique.
+"""Atelier de données — dire, lire, juger, enrichir le lexique, discuter.
 
     python app/atelier_app.py                        # sur cet ordinateur
     python app/atelier_app.py --racine /content/drive/MyDrive/bambara/atelier --share
+    python app/atelier_app.py --racine ... --config assistant.json --share   # + Discuter
 
 Pour contribuer sans rien transcrire : on dit en bambara une phrase affichée
 en français, on lit une phrase bambara, on choisit la meilleure de deux
 traductions, on note des mots familiers. Chacun reprend là où il s'était
 arrêté ; plusieurs contributeurs peuvent travailler en même temps.
+
+Avec `--config` (les modèles de l'assistant, sur GPU de préférence), un onglet
+« Discuter » s'ajoute : le mode entraînement. On parle librement ; on choisit
+ou corrige ce que l'assistant a entendu et ce qu'il a compris ; il le retient
+(mémoire) et chaque tour devient une donnée d'entraînement.
 
 Toute la logique est dans `eval/atelier.py` ; ce fichier n'est qu'une façade.
 Mode d'emploi : docs/ATELIER.md. Avec --share, Gradio ouvre un lien public
@@ -54,6 +60,20 @@ versions de l'assistant, dans un ordre tiré au hasard. Choisis la meilleure
 **pour le sens d'abord**, puis pour le naturel. Ne cherche pas la perfection :
 ton premier avis compte."""
 
+AIDE_DISCUTER = """\
+**Comment faire.** Parle à l'assistant **librement**, comme à quelqu'un :
+une question, une demande, une salutation. Puis aide-le à apprendre :
+
+1. **Ce que j'ai entendu** : choisis la bonne proposition, ou **corrige
+   seulement les mots faux** dans la case. Écris le bambara comme tu
+   l'entends, même avec les lettres du français (« tchè », « gnogon ») :
+   l'atelier le remet en orthographe standard.
+2. **Ce que j'ai compris** : corrige le français s'il le faut, puis valide.
+3. **Ma réponse** : dis si elle était juste.
+
+Ce que tu corriges, l'assistant le retient tout de suite ; et chaque tour
+sert à l'entraîner."""
+
 AIDE_LEXIQUE = """\
 **Les mots que les corpus ne connaissent pas** : argot (« wai »), mots
 français ou anglais glissés dans le bambara, expressions de jeunes. Donne le
@@ -84,7 +104,9 @@ def candidat(lettre: str, texte: str) -> str:
             f'<span style="font-size:1.3em">{html.escape(texte)}</span></div>')
 
 
-def build_interface(atelier: Atelier, phrases_dire: list[dict]):
+def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
+    """`pipeline` (bambara_voice.pipeline.VoicePipeline) : avec lui, l'onglet
+    « Discuter » (mode entraînement)."""
     import gradio as gr
 
     titres = dict(rubriques(phrases_dire))
@@ -336,6 +358,103 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
 
     # --- bilan -----------------------------------------------------------------
 
+    # --- discuter (mode entraînement) ---------------------------------------
+
+    correcteur = None
+
+    def _correcteur():
+        nonlocal correcteur
+        if correcteur is None:
+            from bambara_voice.orthographe import Correcteur
+            correcteur = Correcteur()
+        return correcteur
+
+    def ecouter(spk, audio):
+        """Ce que l'assistant a entendu : ses propositions à choisir ou corriger."""
+        import gradio as gr
+        if not spk:
+            return gr.Radio(), "", "Choisis d'abord qui tu es, en haut de la page.", None
+        if audio is None:
+            return gr.Radio(), "", "Rien d'enregistré : appuie sur le micro, puis parle.", None
+        from eval.collection import to_mono_16k
+        sr, data = audio
+        wav = to_mono_16k(data, sr)
+        propositions = pipeline.asr.alternatives(wav)
+        souvenir = pipeline.memoire.chercher(propositions[0])
+        if souvenir and souvenir[0].bm not in propositions:
+            propositions.append(souvenir[0].bm)
+        etat = {"audio": (16_000, wav), "propositions": propositions}
+        return (gr.Radio(choices=propositions, value=propositions[0]), propositions[0],
+                "**1. Ce que j'ai entendu.** Choisis la bonne proposition, ou corrige les "
+                "mots faux dans la case, puis valide.", etat)
+
+    def choisir_proposition(choix):
+        return choix or ""
+
+    def valider_entendu(etat, texte, inaudible=False):
+        """Le bambara confirmé (en orthographe standard), puis le français que
+        l'assistant en comprend, à confirmer ou corriger."""
+        if not etat:
+            return "Parle d'abord à l'assistant.", "", etat
+        propositions = etat["propositions"]
+        if inaudible or not (texte or "").strip():
+            statut, std, changements = "inaudible", "", []
+            base = propositions[0]
+        else:
+            from bambara_voice.normalize import normalize, strip_punctuation
+            c = _correcteur().corriger(texte, propositions)
+            std, changements = c.texte, c.changements
+            forme = lambda t: strip_punctuation(normalize(t))  # noqa: E731
+            statut = "juste" if forme(std) in {forme(x) for x in propositions} else "corrige"
+            base = std
+        trouve = pipeline.memoire.chercher(base)
+        compris = trouve[0].fr if trouve else pipeline.mt_in.translate(
+            pipeline.memoire.remplacer_mots(base))
+        etat = {**etat, "entendu": (texte or "").strip(), "entendu_std": std,
+                "entendu_statut": statut, "compris_auto": compris}
+        ecrit = (f"Écrit en orthographe standard : **{html.escape(std)}**"
+                 + (f" ({', '.join(f'{a} → {b}' for a, b in changements)})" if changements else "")
+                 if std else "Pas de bambara retenu pour la reconnaissance.")
+        return (f"{ecrit}\n\n**2. Ce que j'ai compris.** Corrige le français s'il le faut, "
+                "puis valide.", compris, etat)
+
+    def valider_compris(spk, conditions, etat, compris):
+        """Le tour est enregistré, retenu par la mémoire, puis l'assistant répond."""
+        if not etat or "entendu_statut" not in etat:
+            return "Commence par l'étape 1.", None, None, etat, ""
+        if not (compris or "").strip():
+            return "Écris ce que ta phrase voulait dire.", None, None, etat, compris
+        sr, wav = etat["audio"]
+        statut = "juste" if compris.strip() == etat["compris_auto"].strip() else "corrige"
+        tour = atelier.enregistrer_tour(
+            spk, wav, sr, etat["propositions"], etat["entendu"], etat["entendu_std"],
+            etat["entendu_statut"], etat["compris_auto"], compris, statut, conditions)
+        # La mémoire : ce que la reconnaissance entend, et la forme corrigée.
+        for bm in {etat["propositions"][0], etat["entendu_std"]} - {""}:
+            pipeline.memoire.apprendre(bm, compris, "conversation")
+        from bambara_voice.pipeline import TurnTrace
+        trace = TurnTrace(architecture="cascade", source_bm=etat["entendu_std"]
+                          or etat["propositions"][0], source_fr=compris.strip())
+        pipeline.respond(trace)
+        son = pipeline.speak(trace)
+        etat = {"tour": tour.id, "reponse_bm": trace.reply_bm}
+        msg = (f"✅ Retenu ({tour.id}). **3. Ma réponse** : {html.escape(trace.reply_bm)} "
+               f"(« {html.escape(trace.reply_fr)} »). Était-elle juste ?")
+        audio = (son.sample_rate, son.audio) if son is not None and len(son.audio) else None
+        return msg, audio, None, etat, ""
+
+    def noter_reponse(spk, etat, juste):
+        if not etat or "tour" not in etat:
+            return "Rien à noter pour l'instant.", etat
+        atelier.juger_reponse(etat["tour"], spk, etat["reponse_bm"], juste)
+        return ("Merci ! Parle à nouveau quand tu veux.", None)
+
+    def reponse_juste(spk, etat):
+        return noter_reponse(spk, etat, True)
+
+    def reponse_fausse(spk, etat):
+        return noter_reponse(spk, etat, False)
+
     def bilan_markdown():
         b = atelier.bilan(phrases_dire)
         qui = " · ".join(INTERLOCUTEURS.values())
@@ -354,6 +473,11 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
                    f"**Voix enregistrée** : {b['minutes']['dire']} min dites, "
                        f"{b['minutes']['lire']} min lues · **lexique** : {b['lexique']} mots · "
                        f"**phrases à lire disponibles** : {b['phrases_a_lire']}", ""]
+        if b["tours"]["total"]:
+            t = b["tours"]
+            lignes += [f"**Discussions** : {t['total']} tours, dont {t['entendu_corrige']} "
+                       f"où le bambara entendu a été corrigé et {t['compris_corrige']} où le "
+                       "sens a été corrigé.", ""]
         if b["lots"]:
             lignes += ["### Jugements (versions révélées)", "",
                        "| Lot | Jugés | Préférences | Les deux bonnes | Les deux mauvaises "
@@ -470,6 +594,26 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
                 a_retirer = gr.Textbox(label="Retirer un mot (tape-le)")
                 retirer = gr.Button("Retirer")
 
+        if pipeline is not None:
+            with gr.Tab("💬 Discuter"):
+                gr.Markdown(AIDE_DISCUTER)
+                etat_discuter = gr.State(None)
+                micro_discuter = gr.Audio(sources=["microphone"], type="numpy",
+                                          label="Parle à l'assistant")
+                envoyer = gr.Button("Envoyer", variant="primary")
+                etape = gr.Markdown()
+                propositions = gr.Radio([], label="Ce que j'ai entendu (propositions)")
+                entendu = gr.Textbox(label="Ce que tu as dit, en bambara (corrige les mots faux)")
+                with gr.Row():
+                    ok_entendu = gr.Button("✅ C'est ce que j'ai dit", variant="primary")
+                    inaudible = gr.Button("🔇 Rien de juste dans ce bambara")
+                compris_txt = gr.Textbox(label="Ce que ta phrase voulait dire, en français")
+                ok_compris = gr.Button("✅ C'est ce que je voulais dire", variant="primary")
+                reponse_audio = gr.Audio(label="Réponse de l'assistant", autoplay=True)
+                with gr.Row():
+                    rep_juste = gr.Button("👍 Réponse juste")
+                    rep_fausse = gr.Button("👎 Réponse fausse")
+
         with gr.Tab("📊 Bilan") as tab_bilan:
             bilan = gr.Markdown(bilan_markdown())
             with gr.Row():
@@ -511,6 +655,19 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict]):
                       [msg_lexique, table, forme, sens, equiv, exemple])
         retirer.click(retirer_mot, a_retirer, [msg_lexique, table])
 
+        if pipeline is not None:
+            envoyer.click(ecouter, [spk, micro_discuter],
+                          [propositions, entendu, etape, etat_discuter])
+            propositions.input(choisir_proposition, propositions, entendu)
+            ok_entendu.click(valider_entendu, [etat_discuter, entendu],
+                             [etape, compris_txt, etat_discuter])
+            inaudible.click(lambda e, t: valider_entendu(e, t, inaudible=True),
+                            [etat_discuter, entendu], [etape, compris_txt, etat_discuter])
+            ok_compris.click(valider_compris, [spk, conditions, etat_discuter, compris_txt],
+                             [etape, reponse_audio, micro_discuter, etat_discuter, compris_txt])
+            rep_juste.click(reponse_juste, [spk, etat_discuter], [etape, etat_discuter])
+            rep_fausse.click(reponse_fausse, [spk, etat_discuter], [etape, etat_discuter])
+
         actualiser.click(bilan_markdown, None, bilan)
         exporter_btn.click(exporter, None, export_msg)
 
@@ -542,10 +699,18 @@ def main() -> None:
     p.add_argument("--share", action="store_true",
                    help="lien public gradio.live (Colab, téléphone)")
     p.add_argument("--port", type=int, default=7862)
+    p.add_argument("--config", type=Path, default=None,
+                   help="modèles de l'assistant (fichier de déploiement JSON) : ajoute "
+                        "l'onglet Discuter, le mode entraînement")
     args = p.parse_args()
 
     atelier = Atelier(args.racine)
-    demo = build_interface(atelier, charger_phrases_a_dire(args.phrases))
+    pipeline = None
+    if args.config:
+        from bambara_voice.config import build_config
+        from bambara_voice.pipeline import VoicePipeline
+        pipeline = VoicePipeline(build_config("cascade", args.config))
+    demo = build_interface(atelier, charger_phrases_a_dire(args.phrases), pipeline)
     demo.queue().launch(server_name="0.0.0.0" if args.share else "127.0.0.1",
                         server_port=args.port, share=args.share)
 

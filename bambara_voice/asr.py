@@ -131,6 +131,9 @@ class SpeechRecognizer:
             model = ASRModel.restore_from(cfg.model_id, map_location=device)
         else:
             model = self._load_nemo_hub(ASRModel, device)
+        # Réglage du décodeur TDT, gardé pour y revenir après une proposition
+        # du décodeur CTC (alternatives).
+        self._decodage_tdt = getattr(model.cfg, "decoding", None)
         if cfg.nemo_decoder == "ctc":
             model.change_decoding_strategy(decoder_type="ctc",
                                            decoding_cfg=model.cfg.aux_ctc.decoding)
@@ -145,6 +148,7 @@ class SpeechRecognizer:
             with open_dict(decoding):
                 decoding.greedy.use_cuda_graph_decoder = False
             model.change_decoding_strategy(decoding_cfg=decoding)
+            self._decodage_tdt = decoding
         model.eval()
         self._model = model
 
@@ -199,6 +203,37 @@ class SpeechRecognizer:
             language=out_lang,
             audio_seconds=len(audio) / cfg.sample_rate,
         )
+
+    def alternatives(self, audio: np.ndarray | str | Path) -> list[str]:
+        """Ce que la reconnaissance entend, par chacun de ses décodeurs. Soloni
+        (hybride TDT/CTC) en a deux, qui diffèrent souvent d'un ou deux mots :
+        autant de propositions à choisir pour qui corrige (atelier, onglet
+        Discuter). La transcription habituelle d'abord, sans doublon ; une
+        seule pour les autres modèles."""
+        if isinstance(audio, (str, Path)):
+            audio = load_audio(audio, self.config.sample_rate)
+        out = [self.transcribe(audio).text]
+        model, cfg = self._model, self.config
+        if (cfg.kind != "nemo" or cfg.backend == "ctranslate2" or not hasattr(model, "joint")
+                or getattr(getattr(model, "cfg", None), "aux_ctc", None) is None):
+            return out
+        ctc = cfg.nemo_decoder == "ctc"
+        self._changer_decodeur("rnnt" if ctc else "ctc")
+        try:
+            autre = normalize(self._decode_nemo(audio), lower=False)
+        finally:
+            self._changer_decodeur("ctc" if ctc else "rnnt")
+        if autre and autre not in out:
+            out.append(autre)
+        return out
+
+    def _changer_decodeur(self, decodeur: str) -> None:
+        model = self._model
+        if decodeur == "ctc":
+            model.change_decoding_strategy(decoder_type="ctc",
+                                           decoding_cfg=model.cfg.aux_ctc.decoding)
+        else:
+            model.change_decoding_strategy(decoder_type="rnnt", decoding_cfg=self._decodage_tdt)
 
     def _decode_ctc(self, inputs) -> str:
         import torch

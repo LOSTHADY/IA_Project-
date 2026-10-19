@@ -9,6 +9,7 @@ ce que chaque donnée apporte à chaque maillon de l'assistant.
 | 📖 Lire | lire à voix haute une phrase bambara déjà écrite | synthèse vocale, reconnaissance | audio + texte exact, sans transcrire |
 | ⚖️ Juger | choisir la meilleure de deux traductions, à l'aveugle | traduction, chaîne complète | une évaluation humaine, avec un test du signe |
 | 📚 Lexique | noter un mot d'argot ou un emprunt et son sens | entrée de la traduction | une table de normalisation (*wai* → salut) |
+| 💬 Discuter | parler librement à l'assistant, puis choisir ou corriger ce qu'il a entendu (bambara) et compris (français), et juger sa réponse | reconnaissance, traduction, réponses, mémoire | des paires d'entraînement sur la parole libre, retenues aussitôt par la mémoire |
 
 Le jeu « Dire » ne demande aucune transcription : la phrase française
 affichée **est** la référence. On n'y mesure donc pas le WER, mais la
@@ -142,6 +143,33 @@ identiques ne sont pas montrées. Juger d'abord le sens, puis le naturel ;
 utiles. **Bilan** donne les préférences et le p du test du signe (les
 égalités écartées) : en dessous de 0,05, la préférence n'est pas due au
 hasard.
+
+### Discuter : le mode entraînement
+
+L'onglet n'apparaît que si l'atelier est lancé avec les modèles de
+l'assistant (`--config`, de préférence sur GPU) : dans
+`notebooks/assistant.ipynb`, `MODE = "entrainement"`. Un tour :
+
+1. **On parle librement** à l'assistant, puis « Envoyer ».
+2. **Ce que j'ai entendu** : les propositions de la reconnaissance (Soloni en
+   donne deux, une par décodeur, souvent différentes d'un ou deux mots, plus
+   la phrase la plus proche de sa mémoire). On choisit la bonne, ou l'on
+   **corrige seulement les mots faux** dans la case. On écrit comme on
+   entend, même avec les lettres du français : `bambara_voice.orthographe`
+   ramène chaque mot à l'orthographe standard (« tchè » → « cɛ », « gnogon »
+   → « ɲɔgɔn », « ouari » → « wari »), en préférant les mots que la
+   reconnaissance a proposés, puis les plus fréquents du bambara parlé
+   (`data/vocabulaire_bambara.tsv`, tiré d'AfVoices). L'atelier affiche les
+   mots changés. « Rien de juste » si aucun bambara ne convient.
+3. **Ce que j'ai compris** : la traduction du bambara confirmé, à corriger
+   s'il le faut.
+4. **La réponse** de l'assistant, à juger juste ou fausse.
+
+Chaque tour sert aussitôt la mémoire (la phrase sera comprise la fois
+suivante) et s'ajoute aux données : audio et bambara standard pour la
+reconnaissance, paires « entendu → sens voulu » pour la traduction
+(`scripts/paires_maison.py --conversations`), réponses jugées pour le sens
+français → bambara. Les conversations ne servent jamais au test.
 
 ## Ce qu'on fait des données
 
