@@ -6,6 +6,10 @@ Push-to-talk assumé : la chaîne compte quatre modèles en série, le duplex
 temps réel n'est pas l'objectif. Le panneau de droite affiche la trace
 complète du tour (texte intermédiaire, source de la réponse, temps par étape)
 — c'est ce qui rend la démo *démonstrative* plutôt que magique.
+
+Quand l'assistant a mal compris, le locuteur écrit ce qu'il voulait dire et
+clique « Retiens-le » : la phrase entre dans la mémoire (bambara_voice.memoire)
+et sera comprise la prochaine fois qu'elle sera dite, sans réentraînement.
 """
 
 from __future__ import annotations
@@ -30,12 +34,23 @@ def _messages_format(gr) -> dict:
     return {}
 
 
+def retenir(pipeline: VoicePipeline, trace, voulu: str) -> str:
+    """« Retiens-le » : le dernier tour voulait dire `voulu`."""
+    if trace is None or not trace.source_bm.strip():
+        return "Rien à retenir : dis d'abord une phrase."
+    if not (voulu or "").strip():
+        return "Écris en français ce que tu voulais dire."
+    s = pipeline.apprendre(trace, voulu)
+    return (f"Retenu : « {s.bm} » veut dire « {s.fr} ». "
+            f"La mémoire compte {len(pipeline.memoire)} phrases.")
+
+
 def build_interface(pipeline: VoicePipeline):
     import gradio as gr
 
     def respond(audio_path, history):
         if not audio_path:
-            return history, None, "Aucun audio reçu."
+            return history, None, "Aucun audio reçu.", None
         trace, speech = pipeline.run(audio_path)
 
         heard = trace.source_bm or trace.asr_text
@@ -54,7 +69,8 @@ def build_interface(pipeline: VoicePipeline):
         details = "  \n".join([
             f"**Architecture** : {trace.architecture}",
             f"**Entendu (bm)** : {trace.source_bm or '—'}",
-            f"**Compris (fr)** : {trace.source_fr}",
+            f"**Compris (fr)** : {trace.source_fr}"
+            + (f" (mémoire, score {trace.memoire_score})" if trace.compris_par == "memoire" else ""),
             f"**Réponse (fr)** : {trace.reply_fr}",
             f"**Réponse (bm)** : {trace.reply_bm}",
             f"**Source** : {trace.reply_source}"
@@ -64,7 +80,7 @@ def build_interface(pipeline: VoicePipeline):
             *[f"- {k} : {v:.2f}" for k, v in trace.timings.items()],
             f"- **total** : {trace.total_seconds:.2f} (RTF {trace.rtf:.2f})",
         ])
-        return history, out_path, details
+        return history, out_path, details, trace
 
     with gr.Blocks(title="Assistant vocal bambara") as demo:
         gr.Markdown(
@@ -81,9 +97,14 @@ def build_interface(pipeline: VoicePipeline):
                 gr.ClearButton([chat, mic, player], value="Effacer")
             with gr.Column(scale=2):
                 details = gr.Markdown("_En attente d'un énoncé._")
+                voulu = gr.Textbox(label="Mal compris ? Écris ce que tu voulais dire (en français)")
+                bouton = gr.Button("Retiens-le")
+                retenu = gr.Markdown()
+        dernier = gr.State(None)
 
-        mic.stop_recording(respond, [mic, chat], [chat, player, details])
-        mic.upload(respond, [mic, chat], [chat, player, details])
+        mic.stop_recording(respond, [mic, chat], [chat, player, details, dernier])
+        mic.upload(respond, [mic, chat], [chat, player, details, dernier])
+        bouton.click(lambda trace, texte: retenir(pipeline, trace, texte), [dernier, voulu], [retenu])
     return demo
 
 

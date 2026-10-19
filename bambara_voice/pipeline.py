@@ -27,6 +27,7 @@ import numpy as np
 from .asr import SpeechRecognizer, load_audio
 from .config import PipelineConfig
 from .llm import ChatModel, split_sentences
+from .memoire import Memoire, Souvenir
 from .mt import Translator
 from .nombres import en_bambara, en_chiffres
 from .normalize import strip_tags
@@ -44,6 +45,8 @@ class TurnTrace:
     asr_text: str = ""            # bambara (cascade) ou français (e2e)
     source_bm: str = ""           # texte bambara si disponible
     source_fr: str = ""           # entrée du LLM
+    compris_par: str = "mt"       # « mt », ou « memoire » : un souvenir (bambara_voice.memoire)
+    memoire_score: float | None = None
     reply_fr: str = ""            # sortie du LLM, après simplification
     reply_bm: str = ""            # réponse finale en bambara
     reply_source: str = "mt"      # "template", "mt" ou "pas_compris"
@@ -98,6 +101,8 @@ class VoicePipeline:
         self.llm = ChatModel(config.llm, dev)
         self.tts = SpeechSynthesizer(config.tts, dev)
         self.templates = TemplateBank.from_config(config.templates)
+        m = config.memoire
+        self.memoire = Memoire(m.path, m.seuil, m.atelier, m.lexique)
 
     # --- étapes ------------------------------------------------------------
 
@@ -121,9 +126,21 @@ class VoicePipeline:
         if not text:  # rien d'autre qu'une annotation : rien à traduire
             trace.source_fr = ""
             return ""
+        # Une phrase déjà apprise (atelier, correction) : son sens est connu.
+        souvenir = self.memoire.chercher(text)
+        if souvenir is not None:
+            trace.source_fr, trace.compris_par = souvenir[0].fr, "memoire"
+            trace.memoire_score = round(souvenir[1], 3)
+            return trace.source_fr
         with _Timer(trace.timings, "mt_in"):
-            trace.source_fr = self.mt_in.translate(text)
+            trace.source_fr = self.mt_in.translate(self.memoire.remplacer_mots(text))
         return trace.source_fr
+
+    def apprendre(self, trace: TurnTrace, fr: str) -> Souvenir:
+        """Ce que le locuteur voulait dire par ce tour : retenu pour la suite."""
+        if not trace.source_bm.strip():
+            raise ValueError("rien n'a été entendu : rien à retenir")
+        return self.memoire.apprendre(trace.source_bm, fr, "correction")
 
     def respond(self, trace: TurnTrace, history: list[dict] | None = None) -> str:
         """Texte français -> réponse bambara, gabarit d'abord puis repli MT.

@@ -142,6 +142,19 @@ class TemplateConfig:
 
 
 @dataclass
+class MemoireConfig:
+    """Ce que l'assistant a appris du locuteur (bambara_voice.memoire) :
+    phrases de l'atelier (`atelier`, lecture seule), corrections faites
+    pendant la démo (`path`, où elles s'écrivent), mots du lexique. Tout
+    vide : pas de mémoire."""
+
+    path: str | None = None
+    atelier: str | None = None
+    lexique: str | None = None
+    seuil: float = 0.85
+
+
+@dataclass
 class PipelineConfig:
     """Configuration complète d'une variante du système."""
 
@@ -155,6 +168,7 @@ class PipelineConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
     templates: TemplateConfig = field(default_factory=TemplateConfig)
+    memoire: MemoireConfig = field(default_factory=MemoireConfig)
     device: str = os.environ.get("BV_DEVICE", "cpu")
     # Nombres de la réponse écrits par règle, pas par NLLB (bambara_voice.nombres).
     spell_numbers: bool = True
@@ -203,7 +217,7 @@ def split_device(device: str) -> tuple[str, int]:
 
 # Champs contenant un chemin : relatifs au fichier de configuration s'ils y
 # existent, sinon laissés tels quels (identifiant du Hub).
-_PATH_FIELDS = ("model_id", "gguf_path", "path")
+_PATH_FIELDS = ("model_id", "gguf_path", "path", "atelier", "lexique")
 
 
 def load_config(path: str | Path, architecture: str = "cascade") -> PipelineConfig:
@@ -224,7 +238,7 @@ def load_config(path: str | Path, architecture: str = "cascade") -> PipelineConf
     data = json.loads(path.read_text(encoding="utf-8"))
     base_dir = path.resolve().parent
     defaults = PipelineConfig()
-    sections = ("asr", "mt_in", "mt_out", "llm", "tts", "templates")
+    sections = ("asr", "mt_in", "mt_out", "llm", "tts", "templates", "memoire")
 
     unknown = set(data) - set(sections) - {"device", "_comment"}
     if unknown:

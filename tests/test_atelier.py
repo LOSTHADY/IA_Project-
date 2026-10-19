@@ -828,6 +828,26 @@ def test_notebook_progres_apprend_de_ta_voix(tmp_path, capsys, test_maison, prom
         assert retenu["bm2fr"] == "nllb-v1"
 
 
+def test_notebook_progres_met_la_memoire_en_service_si_elle_fait_mieux(tmp_path, capsys):
+    """Partie 2 : la mémoire de l'atelier est mesurée (eval.redire), écrite
+    sur Drive, et consignée dans retenu.json, d'où la démo la lit."""
+    pytest.importorskip("sacrebleu")
+    from test_memoire import _jeu
+
+    ns = _ns_9d(tmp_path)
+    (tmp_path / "jeu").mkdir()
+    rapport, prises = _jeu(tmp_path / "jeu")
+    ns.update(RAPPORT_EN_SERVICE=str(rapport), PRISES=str(prises))
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "progres.ipynb") if "ecrire_memoire" in c]
+    exec(cellule, ns)
+    assert "**Mémoire en service.**" in capsys.readouterr().out
+    retenu = json.loads((tmp_path / "ckpt" / "retenu.json").read_text())
+    assert retenu["historique"][-1]["maillon"] == "mémoire" and retenu["historique"][-1]["promu"]
+    assert retenu["memoire"]["atelier"].endswith("memoire-atelier.jsonl")
+    assert len(Path(retenu["memoire"]["atelier"]).read_text().splitlines()) == 120
+    assert ns["EN_SERVICE"]["memoire"] == retenu["memoire"]
+
+
 @pytest.mark.parametrize("retenu, cpu", [(None, True), ("soloni", True), ("soloni", False)])
 def test_notebook_assistant_charge_ce_qui_est_en_service(tmp_path, monkeypatch, retenu, cpu):
     """La démo seule : l'assemblage de retenu.json (Whisper + v1 sans lui),
@@ -860,6 +880,10 @@ def test_notebook_assistant_charge_ce_qui_est_en_service(tmp_path, monkeypatch, 
     assert ("llm" in cfg) == cpu
     pipeline = load_config(tmp_path / "assistant.json")
     assert pipeline.mt_in.model_id == str(ckpt / "nllb-bm2fr")
+    # Tes corrections, toujours ; les phrases de l'atelier, seulement si
+    # retenu.json les a mises en service.
+    assert pipeline.memoire.path.endswith("memoire-corrections.jsonl")
+    assert pipeline.memoire.atelier is None
     if cpu:  # le LLM allégé (GGUF, llama.cpp) : 1 Go au lieu de 6
         assert pipeline.llm.backend == "llamacpp"
         assert pipeline.llm.gguf_path == str(tmp_path / "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf")

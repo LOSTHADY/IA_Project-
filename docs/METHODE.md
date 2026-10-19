@@ -219,6 +219,15 @@ qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliqué
    score de dev est flatté, et seul le test décide. Chaque séance
    d'enregistrement ajoute des paires ; le test, lui, sert à chaque
    décision et doit être renouvelé de temps en temps (nouvelles phrases).
+8. **La mémoire** (`bambara_voice/memoire.py`) n'est pas un réentraînement :
+   des souvenirs (ce que la reconnaissance a entendu → le sens voulu), tirés
+   de l'atelier et des corrections faites dans la démo (« Retiens-le »), plus
+   les mots du lexique. Un réentraînement déplace tous les poids et ne
+   garantit rien ; un souvenir ne sert qu'aux phrases qui lui ressemblent,
+   dès la fois suivante. Ses phrases de l'atelier entrent en service si elles
+   font mieux sur les phrases redites (test) sans dégrader les phrases jamais
+   dites (`eval/redire.py`) ; les corrections du locuteur, elles, sont
+   toujours retenues : c'est lui qui dit ce qu'il voulait dire.
 
 Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
 le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le

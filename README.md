@@ -183,6 +183,13 @@ traducteur sur les phrases dites dans l'atelier (version « maison-N »,
 jugée sur la moitié test, jamais apprise), et recueille le jugement du
 locuteur sur ce qui a été compris (`eval/comprehension.py`).
 
+L'assistant a aussi une **mémoire** (`bambara_voice/memoire.py`) : quand il
+comprend mal, le locuteur écrit dans la démo ce qu'il voulait dire et clique
+« Retiens-le » ; la phrase est comprise la fois suivante, sans
+réentraînement. Les phrases de l'atelier y entrent aussi, si elles ont fait
+leurs preuves (`eval/redire.py` : une phrase apprise est-elle comprise la
+fois suivante ?).
+
 Si le bouton ne s'ouvre pas (le nom de branche contient des « / »), passer
 par Colab : *Fichier → Ouvrir un notebook → GitHub*, ou télécharger le
 fichier `.ipynb` depuis GitHub puis *Fichier → Importer un notebook*.
