@@ -10,6 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 pytest.importorskip("soundfile")
 
@@ -146,6 +147,110 @@ def test_phrases_a_lire_filtrees(atelier):
     prise, _ = atelier.enregistrer("lire", "spk-01", p, data, sr)
     assert prise.id == "li-00001" and prise.texte == p["bm"]
     assert atelier.minutes("lire", "spk-01") == 0.0  # 2 s : arrondi au dixième de minute
+
+
+def _ecrire_liste(atelier, phrases):
+    atelier.root.mkdir(parents=True, exist_ok=True)
+    (atelier.root / "lecture.jsonl").write_text(
+        "".join(json.dumps(p, ensure_ascii=False) + "\n" for p in phrases), encoding="utf-8")
+
+
+def test_lecteurs_reserves_au_test_des_voix_nouvelles():
+    from eval.atelier import lecteur_reserve, partie_voix
+    assert [lecteur_reserve(f"spk-{k:02d}") for k in (1, 7, 8, 9, 16, 24, 100)] == [
+        False, False, True, False, True, True, False]
+    assert not lecteur_reserve("") and not lecteur_reserve("anonyme")
+    parts = [partie_voix(f"lu:lc-{k:05d}") for k in range(2000)]
+    assert 0.12 < parts.count("test") / 2000 < 0.18 and 0.12 < parts.count("choix") / 2000 < 0.18
+    assert partie_voix("lu:lc-00042") == partie_voix("lu:lc-00042")
+
+
+def test_campagne_chaque_lecteur_son_ordre_trois_lecteurs_par_phrase(tmp_path):
+    a = Atelier(tmp_path / "atelier")
+    for k in range(8):
+        a.ajouter_locuteur("f" if k % 2 else "m", consent=True,
+                           telephone=["Tecno Spark 10", "itel A70", "tecno spark 10"][k % 3])
+    phrases = [{"id": f"lc-{k:05d}", "bm": f"A bɛ taa sugu la {k}", "source": "afvoices"}
+               for k in range(60)]
+    _ecrire_liste(a, phrases)
+    sr, data = _voix()
+    premieres = {s: a.prochaine_lecture(s, phrases)["id"] for s in ("spk-01", "spk-02", "spk-03")}
+    assert len(set(premieres.values())) == 3                # pas tous la même première phrase
+
+    # Une phrase lue par trois personnes n'est plus proposée tant qu'il en reste d'autres.
+    p0 = phrases[:5]
+    for s in ("spk-01", "spk-02", "spk-03"):
+        a.enregistrer("lire", s, p0[0], data, sr, conditions="rue ou marché")
+    vues = []
+    while (p := a.prochaine_lecture("spk-04", p0)) is not None:
+        vues.append(p["id"])
+        a.passer("lire", "spk-04", p["id"])
+    assert vues[-1] == "lc-00000" and sorted(vues) == [p["id"] for p in p0]
+
+    # Le lecteur réservé (spk-08) ne lit que des phrases du test, et n'en manque pas.
+    from eval.atelier import partie_voix
+    vues = []
+    while (p := a.prochaine_lecture("spk-08", phrases)) is not None:
+        vues.append(p["id"])
+        a.passer("lire", "spk-08", p["id"])
+    assert vues and {partie_voix(f"lu:{i}") for i in vues} == {"test"}
+    assert len(vues) == sum(partie_voix(f"lu:{p['id']}") == "test" for p in phrases)
+
+    a.enregistrer("lire", "spk-08", phrases[0], data, sr)
+    c = a.bilan_campagne()
+    assert c["lecteurs"] == 4 and c["reserves"] == 1 and c["femmes"] == 2
+    assert c["telephones"] == 2                             # « Tecno Spark 10 » deux fois
+    assert c["lieux"] == {"rue ou marché": 3, "?": 1}       # spk-08 : lieu non indiqué
+    assert c["phrases_lues"] == 1 and c["phrases_disponibles"] == 60 and c["palier"] is None
+    assert c["heures"] == round(4 * 2.0 / 3600, 2) and c["heures_reservees"] == round(2.0 / 3600, 2)
+    # Un dossier par contributeur : Drive peine sur un dossier immense.
+    assert {p.audio.split("/")[1] for p in a.prises("lire")} == {"spk-01", "spk-02", "spk-03",
+                                                                  "spk-08"}
+    assert all((a.root / p.audio).exists() for p in a.prises("lire"))
+    b = {x["locuteur"]: x for x in a.bilan(PHRASES)["locuteurs"]}
+    assert b["spk-08"]["reserve"] and not b["spk-01"]["reserve"]
+    assert b["spk-01"]["telephone"] == "Tecno Spark 10"
+
+
+def test_liste_de_campagne(tmp_path):
+    import campagne
+    a = Atelier(tmp_path / "atelier")
+    _ecrire_liste(a, [{"id": "lu-0001", "bm": "A bɛ taa sugu la sisan.", "source": "test"}])
+    manifeste = tmp_path / "afvoices.jsonl"
+    textes = ["Muso ye ji ta ka na so kɔnɔ", "muso ye ji ta ka na so kɔnɔ",   # doublon
+              "A bɛ taa sugu la sisan.",                                   # déjà dans la liste
+              "N ye wari 500 di a ma",                                    # chiffre
+              "Yesu ko u ma ko u ka taa so",                              # religieux
+              "U ye [cs] fɔ u ye",                                        # passage manquant
+              "Ɔwɔ", "Den ninnu bɛ tulon kɛ lu kɔnɔ [noise]"]
+    manifeste.write_text("".join(json.dumps({"text": t}, ensure_ascii=False) + "\n" for t in textes),
+                         encoding="utf-8")
+    comptes = campagne.liste(a.root, manifeste, n_conversations=100, n_traduites=0)
+    assert comptes == {"deja": 1, "afvoices": 2}
+    liste = a.phrases_a_lire()
+    assert liste[0]["id"] == "lu-0001"                      # déjà lue : gardée telle quelle
+    assert {p["bm"].lower() for p in liste[1:]} == {"muso ye ji ta ka na so kɔnɔ",
+                                                    "den ninnu bɛ tulon kɛ lu kɔnɔ"}
+    assert {p["id"] for p in liste[1:]} == {"lc-00001", "lc-00002"}
+    assert (a.root / "lecture.avant-campagne.jsonl").exists()
+    # Relancée : rien n'est ajouté deux fois, les numéros continuent.
+    manifeste.write_text(manifeste.read_text(encoding="utf-8")
+                         + json.dumps({"text": "Sanji bɛ na bi wula fɛ"}) + "\n", encoding="utf-8")
+    assert campagne.liste(a.root, manifeste, 100, 0) == {"deja": 3, "afvoices": 1}
+    assert a.phrases_a_lire()[-1]["id"] == "lc-00003"
+    assert "palier pilote : 20 h et 30 lecteurs (0 % des heures" in campagne.bilan_markdown(
+        a.bilan_campagne())
+
+
+def test_les_lectures_traduites_gardent_leur_francais(atelier):
+    _ecrire_liste(atelier, [{"id": "lc-00001", "bm": "Muso ye ji ta", "fr": "La femme a pris "
+                             "de l'eau.", "source": "RobotsMaliAI/bayelemabaga"}])
+    sr, data = _voix()
+    atelier.enregistrer("lire", "spk-01", atelier.phrases_a_lire()[0], data, sr,
+                        conditions="véhicule")
+    [l] = load_testset(atelier.exporter()["testset_lire"])
+    assert l.translation_fr == "La femme a pris de l'eau." and l.transcript_bm == "Muso ye ji ta"
+    assert l.extra["conditions"] == "véhicule" and l.extra["prompt_id"] == "lc-00001"
 
 
 def _rapport(path: Path, nom: str, hyps: list[str]) -> Path:
@@ -324,6 +429,17 @@ def test_application(tmp_path):
     assert "| spk-01 (f) | 1 · 2 · 0 |" in bilan and "lot" in bilan and "1 mot" in bilan
     assert "testset-dire.jsonl" in one["exporter"]()
     assert len(one["tout_rafraichir"]("spk-01", "", "ami", "lot")) == 13
+
+    # Campagne de lecture : le téléphone à l'inscription, le bilan de la campagne.
+    msg, _ = one["ajouter_locuteur"]("m", "26-40", "Sikasso", True, False, " itel A70 ")
+    assert "spk-02" in msg and atelier.locuteur("spk-02").telephone == "itel A70"
+    _ecrire_liste(atelier, [{"id": f"lc-{k:05d}", "bm": f"A bɛ taa sugu la {k}",
+                             "source": "afvoices"} for k in range(10)])
+    lue = atelier.prochaine_lecture("spk-02", atelier.phrases_a_lire())
+    assert one["enregistrer_lire"]("spk-02", lue, _voix(), "véhicule")[0].startswith("✅")
+    bilan = one["bilan_markdown"]()
+    assert "### Campagne de lecture" in bilan and "par **1 lecteurs**" in bilan
+    assert "1 téléphones" in bilan and "véhicule : 1" in bilan and "aucun encore" in bilan
 
 
 # --- notebook Colab -----------------------------------------------------------
@@ -803,21 +919,26 @@ def test_notebook_voix_reprend_les_cellules_communes():
         assert c in autres, debut
 
 
-@pytest.mark.parametrize("wer_apres, maison, promu", [(20.0, 0.8, True), (35.0, 0.8, False),
-                                                      (20.0, 0.5, False)])
+@pytest.mark.parametrize("wer_apres, maison, vn_apres, promu", [
+    (20.0, 0.8, None, True), (35.0, 0.8, None, False), (20.0, 0.5, None, False),
+    (20.0, 0.8, 36.0, True), (20.0, 0.8, 45.0, False)])
 def test_notebook_voix_soloni_affine_en_service_seulement_s_il_fait_mieux(
-        tmp_path, capsys, wer_apres, maison, promu):
-    """Deux conditions : moins d'erreurs sur les lectures jamais entendues, et
-    une meilleure compréhension des phrases du jeu maison (moitié test)."""
+        tmp_path, capsys, wer_apres, maison, vn_apres, promu):
+    """Deux conditions : moins d'erreurs sur les enregistrements jamais
+    entendus (les voix nouvelles d'une campagne, s'il y en a assez), et une
+    meilleure compréhension des phrases du jeu maison (moitié test)."""
     pytest.importorskip("sacrebleu")
     ns = _ns_9d(tmp_path)
     ckpt, out = tmp_path / "ckpt", tmp_path / "out"
     dossier = ckpt / "soloni-perso-80"
     dossier.mkdir(parents=True)
     (dossier / "soloni-perso.nemo").write_bytes(b"")
+    vn = {} if vn_apres is None else {
+        "wer_voix_nouvelles_avant": {"n": 60, "wer": 40.0, "wer_releche": 35.0},
+        "wer_voix_nouvelles_apres": {"n": 60, "wer": vn_apres, "wer_releche": vn_apres - 5}}
     (dossier / "rapport.json").write_text(json.dumps({
         "wer_test_avant": {"n": 12, "wer": 30.0, "wer_releche": 25.0},
-        "wer_test_apres": {"n": 12, "wer": wer_apres, "wer_releche": wer_apres - 5}}))
+        "wer_test_apres": {"n": 12, "wer": wer_apres, "wer_releche": wer_apres - 5}, **vn}))
     _rapport_maison(out / "maison-assemblages" / "Soloni-perso-80-NLLB-v1",
                     {"dev": maison, "test": maison})
     ns.update(ESSAI=False, VERSION_VOIX="perso-80", DOSSIER_VOIX=str(dossier),
@@ -828,7 +949,10 @@ def test_notebook_voix_soloni_affine_en_service_seulement_s_il_fait_mieux(
     exec(_sans_shell(cellule.replace("/content/assemblage-voix.json",
                                      str(tmp_path / "assemblage-voix.json"))), ns)
     sortie = capsys.readouterr().out
-    assert "WER 30.0 % → " in sortie
+    if vn_apres is None:
+        assert "(12) : WER 30.0 % → " in sortie and "voix nouvelles" not in sortie
+    else:
+        assert "Mesure sur les voix nouvelles" in sortie and f"(60) : WER 40.0 % → {vn_apres}" in sortie
     retenu = json.loads((ckpt / "retenu.json").read_text())
     assert retenu["historique"][-1]["maillon"] == "reconnaissance (voix)"
     if promu:
@@ -837,8 +961,30 @@ def test_notebook_voix_soloni_affine_en_service_seulement_s_il_fait_mieux(
         assert "En service : Soloni perso-80 + NLLB v1" in sortie
     else:
         assert "**Refusé" in sortie and retenu["nom_asr"] == "Whisper"
-        if wer_apres >= 30:
-            assert "pas moins d'erreurs sur les lectures de test" in sortie
+        if wer_apres >= 30 or (vn_apres or 0) >= 40:
+            assert "pas moins d'erreurs sur les enregistrements jamais entendus" in sortie
+
+
+def test_notebook_voix_courbe_d_apprentissage(tmp_path, capsys):
+    """Trois affinages (un quart, la moitié, tout) : la droite et ses
+    prédictions ; un entraînement déjà fait n'est pas refait."""
+    [cellule] = [c for c in _code(ROOT / "notebooks" / "voix.ipynb") if "courbe_markdown" in c]
+    cellule = cellule.replace("/content/courbe-", f"{tmp_path}/courbe-")
+    ns = {"COURBE": False, "CKPT": str(tmp_path / "ckpt")}
+    exec(_sans_shell(cellule), ns)
+    assert "section sautée" in capsys.readouterr().out
+    for part, heures, wer in ((0.25, 5.0, 40.0), (0.5, 10.0, 36.0), (1.0, 20.0, 32.0)):
+        (tmp_path / f"courbe-{part}").mkdir()
+        (tmp_path / f"courbe-{part}" / "rapport.json").write_text(json.dumps({
+            "donnees": {"heures": heures}, "wer_test_apres": {"n": 9, "wer": 99.0},
+            "wer_voix_nouvelles_apres": {"n": 60, "wer": wer}}))
+    (tmp_path / "ckpt").mkdir()
+    exec(_sans_shell(cellule), {**ns, "COURBE": True})
+    sortie = capsys.readouterr().out
+    assert "50% des lectures : 10.0 h → WER 36.0 %" in sortie
+    assert "+4.0 points de WER en moins" in sortie and "à 100 h : WER ≈ 23 %" in sortie
+    assert json.loads((tmp_path / "courbe-voix.json").read_text()) == [[5.0, 40.0], [10.0, 36.0],
+                                                                       [20.0, 32.0]]
 
 
 @pytest.mark.parametrize("test_maison, promu", [(0.8, True), (0.5, False)])

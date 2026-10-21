@@ -25,7 +25,7 @@ Toute la logique vit ici pour être testée sans interface ; l'application
 jamais versionné (la voix est une donnée personnelle, le dépôt est public) :
 
 - `locuteurs.jsonl` : contributeurs pseudonymisés, avec leur consentement ;
-- `dire.jsonl`, `lire.jsonl` : une prise de son par ligne ; `audio/*.wav` ;
+- `dire.jsonl`, `lire.jsonl` : une prise de son par ligne ; `audio/<contributeur>/*.wav` ;
 - `passes.jsonl` : phrases passées (illisibles, gênantes…) ;
 - `lecture.jsonl` : phrases bambara à lire (`preparer_lecture`) ;
 - `lots/*.jsonl` : paires à juger (`preparer_lot`) ; `jugements.jsonl` ;
@@ -107,6 +107,29 @@ def partition(prompt_id: str) -> str:
     n'a jamais vu, décide si un modèle remplace le précédent
     (eval.promotion). Stable d'une session et d'une machine à l'autre."""
     return "dev" if hashlib.sha1(prompt_id.encode("utf-8")).digest()[0] % 2 == 0 else "test"
+
+
+def partie_voix(cle: str) -> str:
+    """Pour l'étage de la voix (scripts/affiner_soloni.py) : « apprentissage »
+    (70 %), « choix » du checkpoint (15 %) ou « test » (15 %), fixé par la
+    phrase lue (`lu:<id>`) ou par le tour du mode Discuter (`co:<id>`)."""
+    b = hashlib.sha1(cle.encode("utf-8")).digest()[0] * 100 // 256
+    return "test" if b < 15 else "choix" if b < 30 else "apprentissage"
+
+
+def lecteur_reserve(speaker_id: str) -> bool:
+    """Un contributeur sur huit (spk-08, spk-16…) est mis de côté pour le test
+    des « voix nouvelles » : rien de ce qu'il enregistre n'est appris, et il ne
+    lit que des phrases du test. Les sept premiers apprennent tous."""
+    m = re.search(r"(\d+)$", speaker_id or "")
+    return bool(m) and int(m.group(1)) % 8 == 0
+
+
+def _chemin_audio(speaker: str, ident: str) -> str:
+    """Un dossier par contributeur : Drive peine sur un dossier de dizaines de
+    milliers de fichiers (une campagne en produit des centaines de milliers).
+    Les prises déjà faites gardent leur chemin, `audio/<id>.wav`."""
+    return f"audio/{speaker}/{ident}.wav"
 
 
 def usage(prompt_id: str) -> str:
@@ -297,6 +320,10 @@ class Jugement:
     recorded_at: str = ""
 
 
+# Paliers de la campagne de lecture (docs/CAMPAGNE.md) : heures lues et
+# nombre de lecteurs.
+PALIERS_CAMPAGNE = (("pilote", 20, 30), ("significatif", 100, 100), ("grand", 300, 200))
+
 STATUTS_ENTENDU = ("juste", "corrige", "inaudible")
 STATUTS_COMPRIS = ("juste", "corrige")
 
@@ -409,8 +436,8 @@ class Atelier:
             prefix = "di-" if mode == "dire" else "li-"
             rows = _read_jsonl(self._path(f"{mode}.jsonl"))
             pid = _next_id([r["id"] for r in rows], prefix, 5)
-            rel = f"audio/{pid}.wav"
-            (self.root / "audio").mkdir(parents=True, exist_ok=True)
+            rel = _chemin_audio(speaker, pid)
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             sf.write(str(self.root / rel), wav, SAMPLE_RATE, subtype="PCM_16")
             prise = Prise(id=pid, mode=mode, audio=rel, speaker=speaker,
                           prompt_id=phrase["id"], texte=texte,
@@ -462,6 +489,29 @@ class Atelier:
         for p in phrases:
             if p["id"] not in faites and (not rubrique or p.get("rubrique") == rubrique):
                 return p
+        return None
+
+    def prochaine_lecture(self, speaker: str, phrases: list[dict],
+                          max_lecteurs: int = 3) -> dict | None:
+        """La prochaine phrase à lire pour ce contributeur, dans un ordre qui
+        lui est propre (deux lecteurs ne lisent pas les mêmes phrases dans le
+        même ordre) : d'abord celles que moins de `max_lecteurs` personnes ont
+        lues (plus de phrases différentes, chacune lue par plusieurs voix),
+        puis les autres. Un lecteur réservé au test (`lecteur_reserve`) ne lit
+        que des phrases du test."""
+        from collections import Counter
+
+        faites = self._faites("lire", speaker)
+        lectures = Counter(p.prompt_id for p in self.prises("lire"))
+        reserve = lecteur_reserve(speaker)
+        ordre = sorted(phrases, key=lambda p: hashlib.sha1(
+            f"{speaker}:{p['id']}".encode("utf-8")).digest())
+        for plafond in (max_lecteurs, None):
+            for p in ordre:
+                if p["id"] in faites or (reserve and partie_voix(f"lu:{p['id']}") != "test"):
+                    continue
+                if plafond is None or lectures[p["id"]] < plafond:
+                    return p
         return None
 
     def deja_faite(self, mode: str, speaker: str, prompt_id: str,
@@ -537,8 +587,8 @@ class Atelier:
         with self._lock:
             rows = _read_jsonl(self._path("conversations.jsonl"))
             tid = _next_id([r["id"] for r in rows], "co-", 5)
-            rel = f"audio/{tid}.wav"
-            (self.root / "audio").mkdir(parents=True, exist_ok=True)
+            rel = _chemin_audio(speaker, tid)
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             sf.write(str(self.root / rel), wav, SAMPLE_RATE, subtype="PCM_16")
             tour = Tour(id=tid, speaker=speaker, audio=rel, entendu_auto=list(entendu_auto),
                         entendu=entendu.strip(), entendu_std=entendu_std.strip(),
@@ -646,6 +696,7 @@ class Atelier:
                 "lues": len(self.prises("lire", s.id)),
                 "minutes_lues": self.minutes("lire", s.id),
                 "tours": len(self.tours(s.id)),
+                "telephone": s.telephone, "reserve": lecteur_reserve(s.id),
                 "jugements": sum(j.juge == s.id for j in self.jugements()),
             })
         tours = self.tours()
@@ -657,6 +708,30 @@ class Atelier:
                 "minutes": {"dire": self.minutes("dire"), "lire": self.minutes("lire")},
                 "phrases_a_lire": len(lecture), "lexique": len(self.lexique()),
                 "lots": [self.resultats(lot) for lot in self.lots()]}
+
+    def bilan_campagne(self) -> dict:
+        """Où en est la campagne de lecture : heures et lecteurs (appris, et
+        réservés au test des voix nouvelles), téléphones, lieux, phrases."""
+        from collections import Counter
+
+        lues = self.prises("lire")
+        lecteurs = {p.speaker for p in lues}
+        reserves = {s for s in lecteurs if lecteur_reserve(s)}
+        par_id = {s.id: s for s in self.locuteurs()}
+        heures = round(sum(p.duration_s for p in lues) / 3600, 2)
+        out = {"heures": heures,
+               "heures_reservees": round(sum(p.duration_s for p in lues
+                                             if p.speaker in reserves) / 3600, 2),
+               "lecteurs": len(lecteurs), "reserves": len(reserves),
+               "femmes": sum(par_id[s].gender == "f" for s in lecteurs if s in par_id),
+               "telephones": len({par_id[s].telephone.lower() for s in lecteurs
+                                  if s in par_id and par_id[s].telephone}),
+               "lieux": dict(Counter(p.conditions or "?" for p in lues)),
+               "phrases_lues": len({p.prompt_id for p in lues}),
+               "phrases_disponibles": len(self.phrases_a_lire())}
+        out["palier"] = next((nom for nom, h, n in reversed(PALIERS_CAMPAGNE)
+                              if heures >= h and len(lecteurs) >= n), None)
+        return out
 
     def exporter(self) -> dict[str, Path]:
         """Fichiers prêts à servir, dans le dossier de l'atelier :
@@ -691,9 +766,12 @@ class Atelier:
         _write_jsonl(out["lecture"], lecture)
         # Les lectures comme jeu de test de la reconnaissance : le texte lu est
         # exact, d'où le WER de la reconnaissance sur ces voix.
-        lu = [{"id": p.id, "audio": p.audio, "transcript_bm": p.texte, "translation_fr": "",
+        fr_de = {x["id"]: x.get("fr", "") for x in self.phrases_a_lire()}
+        lu = [{"id": p.id, "audio": p.audio, "transcript_bm": p.texte,
+               "translation_fr": fr_de.get(p.prompt_id, ""),
                "speaker": p.speaker, "gender": genres.get(p.speaker, ""),
                "region": regions.get(p.speaker, ""), "register": "lu",
+               "conditions": p.conditions, "prompt_id": p.prompt_id,
                "duration_s": p.duration_s} for p in self.prises("lire")]
         out["testset_lire"] = self.root / "testset-lire.jsonl"
         _write_jsonl(out["testset_lire"], lu)

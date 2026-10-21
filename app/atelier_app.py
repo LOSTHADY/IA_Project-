@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eval.atelier import (  # noqa: E402
-    INTERLOCUTEURS, LECTURE_CIBLE_MIN, PHRASES_A_DIRE, TYPES_LEXIQUE, Atelier,
+    INTERLOCUTEURS, LECTURE_CIBLE_MIN, PALIERS_CAMPAGNE, PHRASES_A_DIRE, TYPES_LEXIQUE, Atelier,
     charger_phrases_a_dire, rubriques, texte_fr,
 )
 from eval.collection import CONDITIONS  # noqa: E402
@@ -117,12 +117,13 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
         return [(f"{s.id} ({'femme' if s.gender == 'f' else 'homme'}"
                  f"{', ' + s.region if s.region else ''})", s.id) for s in atelier.locuteurs()]
 
-    def ajouter_locuteur(genre, age, region, consent, public):
+    def ajouter_locuteur(genre, age, region, consent, public, telephone=""):
         if not genre:
             return "⚠️ Indique le genre.", gr.Dropdown()
         try:
             spk = atelier.ajouter_locuteur(genre, age_range=age or "", region=region.strip(),
-                                           consent=bool(consent), public_release=bool(public))
+                                           consent=bool(consent), public_release=bool(public),
+                                           telephone=(telephone or "").strip())
         except ValueError as exc:
             return f"⚠️ {exc}.", gr.Dropdown()
         return (f"✅ Bienvenue, **{spk.id}** ! Tu peux commencer.",
@@ -271,7 +272,7 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
                           "lecture`)._"), ""
         if not spk:
             return None, "_Choisis d'abord qui tu es, en haut de la page._", ""
-        p = atelier.prochaine("lire", spk, phrases)
+        p = atelier.prochaine_lecture(spk, phrases)
         if p is None:
             return None, "🎉 Tu as lu toutes les phrases. Merci !", progression_lire(spk)
         return p, citation(p["bm"], "à lire à voix haute"), progression_lire(spk)
@@ -473,6 +474,18 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
                    f"**Voix enregistrée** : {b['minutes']['dire']} min dites, "
                        f"{b['minutes']['lire']} min lues · **lexique** : {b['lexique']} mots · "
                        f"**phrases à lire disponibles** : {b['phrases_a_lire']}", ""]
+        c = atelier.bilan_campagne()
+        if c["lecteurs"]:
+            paliers = " · ".join(f"{nom} : {h} h, {n} lecteurs"
+                                 for nom, h, n in PALIERS_CAMPAGNE)
+            lignes += ["### Campagne de lecture", "",
+                       f"**{c['heures']} h lues** par **{c['lecteurs']} lecteurs** "
+                       f"({c['femmes']} femmes ; {c['reserves']} réservés au test des voix "
+                       f"nouvelles, {c['heures_reservees']} h) · {c['telephones']} téléphones "
+                       f"différents · {c['phrases_lues']} phrases différentes lues sur "
+                       f"{c['phrases_disponibles']}", "",
+                       "**Lieux** : " + " · ".join(f"{k} : {v}" for k, v in c["lieux"].items()),
+                       "", f"**Palier atteint** : {c['palier'] or 'aucun encore'} ({paliers})", ""]
         if b["tours"]["total"]:
             t = b["tours"]
             lignes += [f"**Discussions** : {t['total']} tours, dont {t['entendu_corrige']} "
@@ -515,6 +528,8 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
                 age = gr.Dropdown(["moins de 18", "18-25", "26-40", "41-60", "60+"],
                                   value=None, label="Âge")
                 region = gr.Textbox(label="Ville ou région d'origine")
+                telephone = gr.Textbox(label="Ton téléphone (marque et modèle)",
+                                       placeholder="ex. Tecno Spark 10")
             consent = gr.Checkbox(label="J'accepte que ma voix soit enregistrée et utilisée "
                                         "pour ce projet de recherche (formulaire : "
                                         "docs/COLLECTE.md)")
@@ -623,7 +638,7 @@ def build_interface(atelier: Atelier, phrases_dire: list[dict], pipeline=None):
 
         # --- événements --------------------------------------------------------
 
-        inscrire.click(ajouter_locuteur, [genre, age, region, consent, public],
+        inscrire.click(ajouter_locuteur, [genre, age, region, consent, public, telephone],
                        [inscription_msg, spk])
 
         sorties_dire = [msg_dire, micro_dire, phrase_dire, texte_dire, prog_dire, rubrique,

@@ -59,3 +59,66 @@ def test_manifestes_et_caracteres_inconnus(tmp_path):
     assert sum(comptes[k] for k in ("apprentissage", "choix", "test")) == 200
     ligne = json.loads((tmp_path / "out" / "manifest-test.json").read_text().splitlines()[0])
     assert set(ligne) == {"audio_filepath", "duration", "text"} and "," not in ligne["text"]
+
+
+def test_voix_nouvelles_jamais_apprises_et_part_de_la_courbe(tmp_path):
+    """Un contributeur sur huit (spk-08…) n'est jamais appris : ses lectures
+    forment le test des voix nouvelles. `part` ne garde qu'une fraction de
+    l'apprentissage, toujours la même."""
+    racine = _atelier(tmp_path)
+    lignes = (racine / "lire.jsonl").read_text().splitlines()
+    autres = [json.dumps({**json.loads(x), "speaker": "spk-08", "id": f"r{k}",
+                          "audio": f"audio/spk-08/r{k}.wav"}) for k, x in enumerate(lignes[:30])]
+    (racine / "lire.jsonl").write_text("\n".join(lignes + autres))
+    ex = af.exemples(racine)
+    assert {e["partie"] for e in ex if e["speaker"] == "spk-08"} == {"voix_nouvelles"}
+    assert "voix_nouvelles" not in {e["partie"] for e in ex if e["speaker"] != "spk-08"}
+
+    tout = af.manifestes(racine, tmp_path / "tout")
+    assert tout["voix_nouvelles"] == 30
+    assert tout["heures"] == round(sum(e["duration"] for e in ex
+                                       if e["partie"] == "apprentissage") / 3600, 2) > 0
+    moitie = af.manifestes(racine, tmp_path / "moitie", part=0.5)
+    assert 0.3 < moitie["apprentissage"] / tout["apprentissage"] < 0.7
+    # Les parties jugées ne bougent pas, et la moitié est toujours la même.
+    assert {k: moitie[k] for k in ("choix", "test", "voix_nouvelles")} == \
+        {k: tout[k] for k in ("choix", "test", "voix_nouvelles")}
+    assert af.manifestes(racine, tmp_path / "bis", part=0.5) == moitie
+    assert (tmp_path / "bis" / "manifest-apprentissage.json").read_text() == \
+        (tmp_path / "moitie" / "manifest-apprentissage.json").read_text()
+
+
+def test_lectures_suspectes_ecartees(tmp_path, monkeypatch):
+    """Soloni d'origine entend tout autre chose que le texte : la lecture est
+    écartée de l'apprentissage."""
+    import pytest
+    pytest.importorskip("jiwer")
+    manifeste = tmp_path / "m.json"
+    manifeste.write_text("".join(json.dumps({"audio_filepath": a, "duration": 1.0, "text": t}) + "\n"
+                                 for a, t in (("a.wav", "n bɛ taa sugu la"),
+                                              ("b.wav", "a ka kɛnɛ"),
+                                              ("c.wav", "i ni ce"))))
+    entendu = {"a.wav": "n bɛ ta sugu la", "b.wav": "", "c.wav": "furaw ka di kosɛbɛ"}
+    monkeypatch.setattr(af, "transcrire",
+                        lambda model, chemins, batch_size=8: [entendu[c] for c in chemins])
+    assert af.filtrer_suspectes(None, manifeste, 0.7) == 2
+    assert [json.loads(x)["audio_filepath"] for x in manifeste.read_text().splitlines()] == ["a.wav"]
+    assert af.filtrer_suspectes(None, manifeste, 0) == 0
+
+
+def test_courbe_d_apprentissage():
+    import pytest
+    from eval.courbe import ajuster, predire, to_markdown
+
+    # 4 points de WER en moins à chaque doublement des heures.
+    points = [(5, 40.0), (10, 36.0), (20, 32.0)]
+    a, b = ajuster(points)
+    assert b == pytest.approx(-4 / 0.693147, rel=1e-4)
+    assert predire(a, b, 40) == pytest.approx(28.0, abs=1e-6)
+    texte = to_markdown(points, cibles=(80,))
+    assert "| 20.0 | 32.0 % |" in texte and "+4.0 points" in texte and "à 80 h : WER ≈ 24 %" in texte
+    assert "courbe est plate" in to_markdown([(5, 30.0), (10, 30.0), (20, 30.5)])
+    with pytest.raises(ValueError):
+        ajuster([(10, 30.0)])
+    with pytest.raises(ValueError):
+        ajuster([(10, 30.0), (10, 28.0)])

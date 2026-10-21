@@ -195,6 +195,14 @@ d'après la recette de RobotsMali), mis en service seulement s'il fait moins
 d'erreurs sur des lectures jamais entendues et comprend mieux les phrases du
 jeu maison.
 
+Pour un gain qui se voit, il faut des dizaines d'heures lues par des dizaines
+de voix : la **campagne de lecture** ([`docs/CAMPAGNE.md`](docs/CAMPAGNE.md)).
+`scripts/campagne.py` prépare la liste (30 000 phrases d'AfVoices et de
+Bayelemabaga) et suit les paliers (20, 100, 300 h). Un lecteur sur huit est
+réservé au test des **voix nouvelles**, jamais apprises, et le notebook `voix`
+trace dès le pilote la courbe d'apprentissage (`eval/courbe.py`) : ce que
+rapporte chaque doublement des heures.
+
 L'assistant a aussi une **mémoire** (`bambara_voice/memoire.py`) : quand il
 comprend mal, le locuteur écrit dans la démo ce qu'il voulait dire et clique
 « Retiens-le » ; la phrase est comprise la fois suivante, sans
@@ -257,10 +265,11 @@ bambara_voice/     pipeline d'inférence
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
 app/               démo Gradio, application de collecte, atelier de données
-notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb, progrès : progres.ipynb)
+notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb, progrès : progres.ipynb, diagnostic CPU : diagnostic.ipynb, voix : voix.ipynb)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
 docs/ATELIER.md    atelier de données : dire, lire, juger, lexique
+docs/CAMPAGNE.md   campagne de lecture : paliers, lecteurs, voix nouvelles, courbe
 docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
 docs/RESULTATS.md  chiffres mesurés, phase par phase
 docs/RECHERCHE.md  ressources, modèles et techniques pour la suite (dictionnaires, corpus, plan)

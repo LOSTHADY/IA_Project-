@@ -201,9 +201,9 @@ le dossier de l'atelier :
 Dans `MyDrive/bambara/atelier` (ou `data/atelier/collecte` en local) :
 
 ```
-locuteurs.jsonl   pseudonymes, genre, âge, région, consentements
-dire.jsonl        une prise « Dire » par ligne      audio/di-00001.wav …
-lire.jsonl        une prise « Lire » par ligne      audio/li-00001.wav …
+locuteurs.jsonl   pseudonymes, genre, âge, région, téléphone, consentements
+dire.jsonl        une prise « Dire » par ligne      audio/spk-01/di-00001.wav …
+lire.jsonl        une prise « Lire » par ligne      audio/spk-01/li-00001.wav …
 passes.jsonl      phrases passées
 lecture.jsonl     les phrases bambara à lire
 lots/*.jsonl      les paires à juger
@@ -212,7 +212,8 @@ lexique.jsonl     le lexique
 comprehension.jsonl  notes « même sens / à moitié / faux » (progres.ipynb)
 ```
 
-Audio en WAV mono 16 kHz. Écritures atomiques : un fichier n'est jamais à
+Audio en WAV mono 16 kHz, un dossier par contributeur (les prises d'avant
+la campagne de lecture restent dans `audio/`). Écritures atomiques : un fichier n'est jamais à
 moitié écrit, même si la session tombe pendant un clic.
 
 ## Données personnelles

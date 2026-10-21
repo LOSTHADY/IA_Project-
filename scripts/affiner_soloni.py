@@ -15,10 +15,19 @@ n'ait à transcrire :
   bambara (ramené à l'orthographe standard, `bambara_voice.orthographe`).
 
 Chaque phrase lue, ou chaque tour, va d'un seul côté, fixé une fois pour
-toutes : 70 % pour apprendre, 15 % pour choisir le checkpoint (WER de
-validation), 15 % pour le test, jamais appris : le WER avant/après s'y
-mesure. Réciter ce qu'il a appris ne prouverait rien ; reconnaître des
-phrases qu'il n'a jamais entendues, si. Le texte est écrit comme Soloni
+toutes (`eval.atelier.partie_voix`) : 70 % pour apprendre, 15 % pour choisir
+le checkpoint (WER de validation), 15 % pour le test, jamais appris. Et un
+contributeur sur huit (`eval.atelier.lecteur_reserve`) n'est jamais appris :
+ses enregistrements forment le test des **voix nouvelles**, la mesure qui
+compte pour une campagne (docs/CAMPAGNE.md). Réciter ce qu'il a appris ne
+prouverait rien ; reconnaître des voix et des phrases qu'il n'a jamais
+entendues, si.
+
+`--filtre` écarte de l'apprentissage les lectures très éloignées de ce que
+Soloni en entend (taux d'erreur par caractère au-delà du seuil) : phrase mal
+lue, silence, autre phrase. `--part` n'apprend qu'une fraction des
+enregistrements (tirée par fichier, toujours la même) : la courbe
+d'apprentissage du notebook `voix`. Le texte est écrit comme Soloni
 l'écrit (sans ponctuation, majuscules gardées) ; une phrase contenant un
 caractère que son vocabulaire ne connaît pas est écartée.
 
@@ -47,15 +56,21 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bambara_voice.normalize import normalize, strip_punctuation  # noqa: E402
+from eval.atelier import lecteur_reserve, partie_voix  # noqa: E402
 
 SOLONI = "RobotsMali/soloni-114m-tdt-ctc-v3"
+PARTIES = ("apprentissage", "choix", "test", "voix_nouvelles")
 
 
-def partie(cle: str) -> str:
-    """« apprentissage » (70 %), « choix » (15 %) ou « test » (15 %), fixé par
-    la clé (la phrase lue, ou le tour)."""
-    b = hashlib.sha1(cle.encode("utf-8")).digest()[0] * 100 // 256
-    return "test" if b < 15 else "choix" if b < 30 else "apprentissage"
+def partie(cle: str, speaker: str = "") -> str:
+    """La partie d'un enregistrement : « voix_nouvelles » pour un contributeur
+    réservé, sinon celle de sa phrase (ou de son tour)."""
+    return "voix_nouvelles" if lecteur_reserve(speaker) else partie_voix(cle)
+
+
+def garde_part(chemin: str, part: float) -> bool:
+    """Le même enregistrement est toujours gardé (ou non) pour une même part."""
+    return hashlib.sha1(chemin.encode("utf-8")).digest()[1] / 256 < part
 
 
 def texte_asr(texte: str) -> str:
@@ -75,34 +90,57 @@ def exemples(atelier: Path) -> list[dict]:
     for p in _lignes(atelier / "lire.jsonl"):
         out.append({"audio_filepath": str((atelier / p["audio"]).resolve()),
                     "duration": p.get("duration_s", 0.0), "text": texte_asr(p["texte"]),
-                    "partie": partie(f"lu:{p['prompt_id']}"), "source": "lecture",
+                    "partie": partie(f"lu:{p['prompt_id']}", p.get("speaker", "")),
+                    "source": "lecture",
                     "speaker": p.get("speaker", "")})
     for t in _lignes(atelier / "conversations.jsonl"):
         if t.get("entendu_statut") in ("juste", "corrige") and (t.get("entendu_std") or "").strip():
             out.append({"audio_filepath": str((atelier / t["audio"]).resolve()),
                         "duration": t.get("duration_s", 0.0), "text": texte_asr(t["entendu_std"]),
-                        "partie": partie(f"co:{t['id']}"), "source": "conversation",
+                        "partie": partie(f"co:{t['id']}", t.get("speaker", "")),
+                        "source": "conversation",
                         "speaker": t.get("speaker", "")})
     return [e for e in out if e["text"]]
 
 
-def manifestes(atelier: Path, out: Path, tokenizer=None) -> dict[str, int]:
+def manifestes(atelier: Path, out: Path, tokenizer=None, part: float = 1.0) -> dict[str, int]:
     """Écrit `out/manifest-{partie}.json` (format NeMo) ; renvoie le nombre
-    d'enregistrements par partie (et d'écartés, pour un caractère inconnu)."""
+    d'enregistrements par partie (et d'écartés, pour un caractère inconnu),
+    et les heures apprises. `part` : fraction de l'apprentissage gardée."""
     out.mkdir(parents=True, exist_ok=True)
-    garde, ecartes = {"apprentissage": [], "choix": [], "test": []}, 0
+    garde, ecartes = {p: [] for p in PARTIES}, 0
     unk = getattr(tokenizer, "unk_id", None) if tokenizer is not None else None
     for e in exemples(atelier):
         if tokenizer is not None and unk is not None and unk >= 0 \
                 and unk in tokenizer.text_to_ids(e["text"]):
             ecartes += 1
             continue
+        if e["partie"] == "apprentissage" and not garde_part(e["audio_filepath"], part):
+            continue
         garde[e["partie"]].append(e)
     for nom, lignes in garde.items():
         (out / f"manifest-{nom}.json").write_text(
             "".join(json.dumps({k: e[k] for k in ("audio_filepath", "duration", "text")},
                                ensure_ascii=False) + "\n" for e in lignes), encoding="utf-8")
-    return {**{k: len(v) for k, v in garde.items()}, "ecartes": ecartes}
+    heures = round(sum(e["duration"] or 0 for e in garde["apprentissage"]) / 3600, 2)
+    return {**{k: len(v) for k, v in garde.items()}, "ecartes": ecartes, "heures": heures}
+
+
+def filtrer_suspectes(model, manifest: Path, seuil: float) -> int:
+    """Retire du manifeste les enregistrements dont Soloni entend tout autre
+    chose que le texte (taux d'erreur par caractère au-delà de `seuil`) ;
+    renvoie leur nombre."""
+    import jiwer
+
+    lignes = _lignes(manifest)
+    if not lignes or seuil <= 0:
+        return 0
+    hyps = transcrire(model, [x["audio_filepath"] for x in lignes])
+    gardees = [x for x, h in zip(lignes, hyps)
+               if jiwer.cer(x["text"].lower(), h.lower() or "∅") <= seuil]
+    manifest.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in gardees),
+                        encoding="utf-8")
+    return len(lignes) - len(gardees)
 
 
 def transcrire(model, chemins: list[str], batch_size: int = 8) -> list[str]:
@@ -198,31 +236,48 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--patience", type=int, default=5)
     p.add_argument("--essai", action="store_true",
                    help="une époque, pour vérifier que tout s'enchaîne (scores sans valeur)")
+    p.add_argument("--part", type=float, default=1.0,
+                   help="fraction des enregistrements d'apprentissage gardée (courbe)")
+    p.add_argument("--filtre", type=float, default=0.7,
+                   help="écarter les lectures dont le taux d'erreur par caractère dépasse ce "
+                        "seuil (0 : ne rien écarter)")
     args = p.parse_args(argv)
 
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = charger(args.modele, device)
-    comptes = manifestes(args.atelier, args.out, getattr(model, "tokenizer", None))
-    print(f"Apprentissage {comptes['apprentissage']}, choix {comptes['choix']}, "
-          f"test {comptes['test']} (écartés : {comptes['ecartes']})")
+    comptes = manifestes(args.atelier, args.out, getattr(model, "tokenizer", None), args.part)
+    for nom in ("apprentissage", "choix"):
+        comptes[f"suspectes_{nom}"] = filtrer_suspectes(
+            model, args.out / f"manifest-{nom}.json", args.filtre)
+        comptes[nom] -= comptes[f"suspectes_{nom}"]
+    print(f"Apprentissage {comptes['apprentissage']} ({comptes['heures']} h), choix "
+          f"{comptes['choix']}, test {comptes['test']}, voix nouvelles "
+          f"{comptes['voix_nouvelles']} (écartés : {comptes['ecartes']} pour un caractère "
+          f"inconnu, {comptes['suspectes_apprentissage'] + comptes['suspectes_choix']} "
+          "lectures suspectes)")
     if comptes["apprentissage"] < 20 or not comptes["choix"] or not comptes["test"]:
         raise SystemExit("Trop peu d'enregistrements au texte exact (lectures, tours corrigés) : "
                          "au moins une vingtaine pour apprendre, et quelques-uns à part.")
     avant = wer(model, args.out / "manifest-test.json")
-    print(f"WER sur le test, avant : {avant}")
+    avant_vn = wer(model, args.out / "manifest-voix_nouvelles.json")
+    print(f"WER avant : test {avant}, voix nouvelles {avant_vn}")
     epochs = 1 if args.essai else args.epochs
     configurer(model, args.out, args.batch, epochs, args.lr, comptes["apprentissage"])
     meilleur = affiner(model, args.out, epochs, "16-mixed" if device == "cuda" else "32",
                        args.patience)
     model.eval()
     apres = wer(model, args.out / "manifest-test.json")
-    print(f"WER sur le test, après : {apres}")
+    apres_vn = wer(model, args.out / "manifest-voix_nouvelles.json")
+    print(f"WER après : test {apres}, voix nouvelles {apres_vn}")
     model.save_to(str(args.out / "soloni-perso.nemo"))
     (args.out / "rapport.json").write_text(json.dumps({
         "modele_de_depart": args.modele, "donnees": comptes, "epochs": epochs, "lr": args.lr,
         "essai": args.essai, "meilleur_checkpoint": str(meilleur) if meilleur else None,
-        "wer_test_avant": avant, "wer_test_apres": apres}, ensure_ascii=False, indent=1),
+        "part": args.part, "filtre": args.filtre,
+        "wer_test_avant": avant, "wer_test_apres": apres,
+        "wer_voix_nouvelles_avant": avant_vn, "wer_voix_nouvelles_apres": apres_vn},
+        ensure_ascii=False, indent=1),
         encoding="utf-8")
     print(f"Modèle : {args.out / 'soloni-perso.nemo'}")
 
