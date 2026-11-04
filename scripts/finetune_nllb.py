@@ -9,6 +9,20 @@ en disque mais nettement plus simple à évaluer, et le sens fr->bm (le plus
 critique pour la qualité perçue, puisque c'est lui qui produit ce que
 l'utilisateur entend) mérite d'être optimisé séparément.
 
+Données en plus (--extra-dataset RobotsMali/jeli-asr) : les transcriptions de
+Jeli-ASR et leurs traductions, du bambara parlé, plus proche de ce que
+l'assistant entend que le bambara écrit de Bayelemabaga (souvent religieux).
+L'audio n'est pas décodé. Les paires en double sont retirées ; un jeu sans
+partition de validation en cède quelques paires à la validation. Un jeu peut
+aussi être un dossier ou un fichier JSON local (scripts/donnees_v3.py), et
+« @N » n'en garde que N paires tirées au hasard (RobotsMali/jeli-asr@4000).
+
+--eval-file remplace la validation par un jeu choisi : le meilleur checkpoint
+est alors celui qui traduit le mieux ce jeu. Pour l'assistant, ce sont les
+phrases de développement du jeu maison, telles que la reconnaissance les a
+transcrites (§9a du notebook) : on choisit sur la parole quotidienne, pas
+sur des contes ou des griots.
+
 Référence : Bayelemabaga contient ~47k paires alignées bambara-français
 issues du Corpus Bambara de Référence (NAACL 2025). C'est peu — attention au
 surapprentissage, garder le nombre d'époques bas et surveiller le chrF++ de
@@ -26,12 +40,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bambara_voice.config import BAM, FRA  # noqa: E402
 from eval.corpora import BAYELEMABAGA  # noqa: E402
+from reprise import last_complete_checkpoint  # noqa: E402
 
 
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataset", default=BAYELEMABAGA)
+    p.add_argument("--extra-dataset", action="append", default=[], metavar="ID[:CONFIG][@N]",
+                   help="jeu parallèle ajouté à l'entraînement (répétable), ex. "
+                        "RobotsMali/jeli-asr@4000, ou un dossier local")
+    p.add_argument("--main-samples", type=int, default=None,
+                   help="ne garder que N paires du jeu principal, tirées au hasard (rappel "
+                        "de Bayelemabaga sans qu'il domine le mélange)")
+    p.add_argument("--eval-file", default=None,
+                   help="validation (choix du checkpoint) sur ce jeu, colonnes bm et fr, au "
+                        "lieu de celle des jeux d'entraînement")
     p.add_argument("--model", default="facebook/nllb-200-distilled-600M")
     p.add_argument("--direction", choices=["bm2fr", "fr2bm"], required=True)
     p.add_argument("--bm-column", default=None, help="défaut : détectée")
@@ -41,8 +65,18 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--grad-accum", type=int, default=2)
     p.add_argument("--lr", type=float, default=3e-5)
+    p.add_argument("--optim", default="adafactor",
+                   help="adafactor : état d'optimiseur quasi nul. Avec AdamW (adamw_torch), "
+                        "NLLB-600M dépasse les 15 Go d'un T4 dès un lot de phrases longues "
+                        "(vocabulaire de 256k : logits de 1 Go par lot de 8 × 128)")
     p.add_argument("--max-length", type=int, default=128)
     p.add_argument("--max-samples", type=int, default=None)
+    p.add_argument("--save-steps", type=int, default=500,
+                   help="checkpoint (et évaluation) toutes les N étapes : une session Colab "
+                        "coupée ne perd que le travail depuis le dernier")
+    p.add_argument("--eval-samples", type=int, default=300,
+                   help="phrases de validation évaluées à chaque checkpoint (génération "
+                        "en faisceau : coûteuse)")
     p.add_argument("--resume", action="store_true",
                    help="reprendre au dernier checkpoint de --output s'il existe")
     p.add_argument("--push-to-hub", default=None, metavar="REPO_ID")
@@ -54,7 +88,6 @@ def main() -> None:
     output = args.output or f"checkpoints/nllb-{args.direction}"
 
     import torch
-    from transformers.trainer_utils import get_last_checkpoint
     from transformers import (
         AutoTokenizer, AutoModelForSeq2SeqLM, DataCollatorForSeq2Seq,
         Seq2SeqTrainer, Seq2SeqTrainingArguments,
@@ -63,17 +96,91 @@ def main() -> None:
 
     from eval.corpora import detect_columns, load_any
 
+    def pairs(split, cols):
+        """Une partition ramenée à deux colonnes, bm et fr, sans audio."""
+        if cols.audio:
+            split = split.remove_columns([cols.audio])
+
+        def to_pair(batch):
+            if cols.nested:
+                rows = batch[cols.nested]
+                return {"bm": [r[cols.bm] for r in rows], "fr": [r[cols.fr] for r in rows]}
+            return {"bm": batch[cols.bm], "fr": batch[cols.fr]}
+
+        split = split.map(to_pair, batched=True, remove_columns=split.column_names)
+        return split.filter(lambda r: bool((r["bm"] or "").strip() and (r["fr"] or "").strip()))
+
     ds = load_any(args.dataset)
     cols = detect_columns(ds["train"].features, args.bm_column, args.fr_column,
                           need_fr=True)
     print(f"Schéma : {dict(ds['train'].features)}\nColonnes : {cols.describe()}")
 
-    if args.direction == "bm2fr":
-        src_lang, tgt_lang = BAM, FRA
-        src_col, tgt_col = cols.bm, cols.fr
+    eval_key = next((k for k in ("validation", "valid", "dev") if k in ds), None)
+    if eval_key is None:
+        split = ds["train"].train_test_split(test_size=0.05, seed=42)
+        train_raw, eval_raw = pairs(split["train"], cols), pairs(split["test"], cols)
     else:
-        src_lang, tgt_lang = FRA, BAM
-        src_col, tgt_col = cols.fr, cols.bm
+        train_raw, eval_raw = pairs(ds["train"], cols), pairs(ds[eval_key], cols)
+    if args.max_samples:
+        train_raw = train_raw.select(range(min(args.max_samples, len(train_raw))))
+    if args.main_samples and len(train_raw) > args.main_samples:
+        train_raw = train_raw.shuffle(seed=42).select(range(args.main_samples))
+    n_eval = args.eval_samples or len(eval_raw)
+    if args.extra_dataset:
+        n_eval = max(1, n_eval // 2)  # moitié pour le jeu principal, moitié pour les autres
+    if len(eval_raw) > n_eval:
+        eval_raw = eval_raw.shuffle(seed=42).select(range(n_eval))
+
+    if args.extra_dataset:
+        from datasets import concatenate_datasets
+
+        trains, evals = [train_raw], [eval_raw]
+        n_extra = max(1, (args.eval_samples or 300) // (2 * len(args.extra_dataset)))
+        for spec in args.extra_dataset:
+            spec, _, n_keep = spec.partition("@")
+            name, _, config = spec.partition(":")
+            extra = load_any(name, config or None)
+            extra_cols = detect_columns(extra["train"].features, need_fr=True)
+            extra_pairs = pairs(extra["train"], extra_cols)
+            if args.max_samples:
+                extra_pairs = extra_pairs.select(range(min(args.max_samples, len(extra_pairs))))
+            if n_keep and len(extra_pairs) > int(n_keep):
+                extra_pairs = extra_pairs.shuffle(seed=42).select(range(int(n_keep)))
+            if args.eval_file:  # validation imposée : tout va à l'entraînement
+                held = {"train": extra_pairs, "test": extra_pairs.select([])}
+            else:
+                # Le test reste intact : la validation vient de la partition train.
+                held = extra_pairs.train_test_split(test_size=n_extra, seed=42)
+            trains.append(held["train"])
+            evals.append(held["test"])
+            print(f"+ {name} : {len(held['train'])} paires d'entraînement, "
+                  f"{len(held['test'])} de validation ({extra_cols.describe()})")
+        train_raw = concatenate_datasets(trains).shuffle(seed=42)
+        eval_raw = concatenate_datasets(evals)
+
+    if args.eval_file:
+        imposee = load_any(args.eval_file)["train"]
+        eval_raw = pairs(imposee, detect_columns(imposee.features, need_fr=True))
+        print(f"Validation imposée : {args.eval_file} ({len(eval_raw)} paires)")
+
+    seen: set = set()
+
+    def first_time(row):
+        key = (row["bm"].strip(), row["fr"].strip())
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    before = len(train_raw)
+    train_raw = train_raw.filter(first_time)
+    print(f"Entraînement : {len(train_raw)} paires ({before - len(train_raw)} doublons "
+          f"retirés) ; validation : {len(eval_raw)}")
+
+    if args.direction == "bm2fr":
+        src_lang, tgt_lang, src_col, tgt_col = BAM, FRA, "bm", "fr"
+    else:
+        src_lang, tgt_lang, src_col, tgt_col = FRA, BAM, "fr", "bm"
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model, src_lang=src_lang, tgt_lang=tgt_lang
@@ -84,27 +191,9 @@ def main() -> None:
     # faux. Même contrainte qu'à l'inférence (bambara_voice.mt).
     model.generation_config.forced_bos_token_id = tokenizer.convert_tokens_to_ids(tgt_lang)
 
-    eval_key = next((k for k in ("validation", "valid", "dev") if k in ds), None)
-    if eval_key is None:
-        split = ds["train"].train_test_split(test_size=0.05, seed=42)
-        train_raw, eval_raw = split["train"], split["test"]
-    else:
-        train_raw, eval_raw = ds["train"], ds[eval_key]
-    if args.max_samples:
-        train_raw = train_raw.select(range(min(args.max_samples, len(train_raw))))
-
-    def texts(batch, column):
-        # Format WMT (translation = {bam, fr}) ou colonnes plates.
-        if cols.nested:
-            return [row[column] for row in batch[cols.nested]]
-        return batch[column]
-
     def preprocess(batch):
-        model_inputs = tokenizer(
-            texts(batch, src_col), text_target=texts(batch, tgt_col),
-            max_length=args.max_length, truncation=True,
-        )
-        return model_inputs
+        return tokenizer(batch[src_col], text_target=batch[tgt_col],
+                         max_length=args.max_length, truncation=True)
 
     train = train_raw.map(preprocess, batched=True, remove_columns=train_raw.column_names)
     evalset = eval_raw.map(preprocess, batched=True, remove_columns=eval_raw.column_names)
@@ -126,12 +215,16 @@ def main() -> None:
     training_args = Seq2SeqTrainingArguments(
         output_dir=output,
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
+        optim=args.optim,
         num_train_epochs=args.epochs,
         fp16=torch.cuda.is_available(),
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        eval_strategy="steps",
+        eval_steps=args.save_steps,
+        save_strategy="steps",
+        save_steps=args.save_steps,
         save_total_limit=2,
         predict_with_generate=True,
         generation_max_length=args.max_length,
@@ -154,10 +247,13 @@ def main() -> None:
         compute_metrics=compute_metrics,
         processing_class=tokenizer,
     )
-    last = get_last_checkpoint(output) if args.resume and Path(output).is_dir() else None
+    last = last_complete_checkpoint(output) if args.resume else None
     if args.resume:
         print(f"Reprise depuis {last}" if last else "Aucun checkpoint : départ de zéro")
     trainer.train(resume_from_checkpoint=last)
+    # Historique et durée d'entraînement (trainer_state.json), pour estimer
+    # la durée d'un entraînement complet à partir d'un essai.
+    trainer.save_state()
     trainer.save_model(output)
     tokenizer.save_pretrained(output)
     print(f"Modèle {args.direction} enregistré dans {output}")

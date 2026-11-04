@@ -1,0 +1,199 @@
+# Soloni (RobotsMali) comme troisième modèle de reconnaissance de la cascade,
+# à côté de MMS (zero-shot) et de Whisper affiné (Colab, phase 3).
+#
+# Soloni est un Parakeet de NVIDIA (114 millions de paramètres, NeMo) affiné
+# sur le bambara par RobotsMali. Même protocole qu'en phase 1 : Jeli-ASR,
+# partition de test, les mêmes 300 énoncés (graine 0), puis NLLB d'origine.
+# MMS est rejoué dans la même exécution pour que la comparaison ne dépende
+# ni de la version du code (plafond de longueur de NLLB) ni des bibliothèques.
+#
+# Le job « fiches » affiche les fiches des modèles de RobotsMali. Soloni v0,
+# l'ancêtre de toutes les versions, a été affiné sur bam-asr-early, tiré à
+# 87 % de Jeli-ASR : la comparaison compte nos phrases de test qui y
+# figurent (eval.recouvrement). Un score de Soloni avantagé par ce
+# recouvrement ne se comparerait pas aux autres.
+name: Soloni dans la cascade
+
+on:
+  workflow_dispatch:
+    inputs:
+      modele:
+        description: "Modèle NeMo de RobotsMali"
+        default: "RobotsMali/soloni-114m-tdt-ctc-v3"
+      limite:
+        description: "Énoncés de Jeli-ASR (test)"
+        default: "300"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/soloni.yml, bambara_voice/asr.py, eval/recouvrement.py]
+
+permissions:
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  MODELE: ${{ inputs.modele || 'RobotsMali/soloni-114m-tdt-ctc-v3' }}
+  LIMITE: ${{ inputs.limite || '300' }}
+
+jobs:
+  fiches:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install huggingface_hub
+      - name: Modèles de RobotsMali et fiche du modèle évalué
+        run: |
+          python - <<'EOF' | tee fiches.md
+          import os
+          from huggingface_hub import HfApi, hf_hub_download
+
+          api = HfApi()
+          print("## Modèles Soloni et Soloba de RobotsMali\n")
+          for search in ("soloni", "soloba"):
+              for m in api.list_models(author="RobotsMali", search=search):
+                  print(f"- {m.id}")
+          repo = os.environ["MODELE"]
+          print(f"\n## Fichiers de {repo}\n")
+          for f in api.list_repo_files(repo):
+              print(f"- {f}")
+          print(f"\n## Fiche de {repo}\n")
+          print(open(hf_hub_download(repo, "README.md"), encoding="utf-8").read())
+
+          # Lignée du modèle : données d'entraînement de chaque version.
+          import re
+          for v in range(4):
+              other = f"RobotsMali/soloni-114m-tdt-ctc-v{v}"
+              if other == repo:
+                  continue
+              card = open(hf_hub_download(other, "README.md"), encoding="utf-8").read()
+              print(f"\n## {other} : données\n")
+              head = card.split("---")[1] if card.startswith("---") else ""
+              print("\n".join(l for l in head.splitlines()
+                              if re.match(r"\s*(- |datasets|base_model|name|split|value)", l)))
+              for title in ("## Dataset", "## Training"):
+                  if title in card:
+                      print(card.split(title, 1)[1].split("\n## ", 1)[0].strip()[:1500])
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soloni-fiches
+          path: fiches.md
+
+  mesure:
+    name: ${{ matrix.nom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: soloni
+            nemo: true
+            args: >-
+              --label "Soloni + NLLB non affiné"
+              asr --dataset RobotsMali/jeli-asr --model $MODELE --kind nemo
+              --with-mt --limit $LIMITE
+          - nom: mms
+            nemo: false
+            args: >-
+              --label "MMS + NLLB zero-shot"
+              asr --dataset RobotsMali/jeli-asr --model facebook/mms-1b-all --kind ctc
+              --target-lang bam --with-mt --limit $LIMITE
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Libérer de la place (modèles et corpus pèsent plusieurs Go)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dépendances (PyTorch CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: NeMo (Soloni seulement)
+        if: matrix.nemo
+        run: |
+          pip install "nemo_toolkit[asr]"
+          python -c "import nemo, torch, transformers; print('nemo', nemo.__version__, 'torch', torch.__version__, 'transformers', transformers.__version__)"
+
+      - name: Mesure
+        run: python -m eval.baselines --out results --device cpu ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soloni-${{ matrix.nom }}
+          path: results/
+          if-no-files-found: warn
+
+  comparaison:
+    needs: mesure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: soloni-*
+          path: results
+          merge-multiple: true
+
+      - name: Tableau, significativité, analyse
+        run: |
+          {
+            echo "## Soloni contre MMS, mêmes énoncés"
+            echo
+            python -m eval.compare results/asr-*.json
+            echo
+            echo "### L'écart est-il réel ?"
+            echo
+            python -m eval.significance results/asr-*.json \
+              --noms "MMS + NLLB zero-shot" "Soloni + NLLB non affiné"
+            echo
+            echo "### Analyse d'erreurs"
+            echo
+            python -m eval.analysis results/asr-*.json
+          } | tee soloni.md
+          cat soloni.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nos phrases de test ont-elles servi à entraîner Soloni ?
+        continue-on-error: true
+        run: |
+          pip install datasets soundfile
+          {
+            echo "### Phrases de test retrouvées dans des données d'entraînement"
+            echo
+            echo "Soloni v0 (ancêtre de toutes les versions) : bam-asr-early."
+            echo
+            python -m eval.recouvrement results/asr-*.json --dataset RobotsMali/bam-asr-early --split train
+            echo
+            echo "Pour comparaison, la partition train de Jeli-ASR (celle de notre Whisper) :"
+            echo
+            python -m eval.recouvrement results/asr-*.json --dataset RobotsMali/jeli-asr --split train
+          } | tee recouvrement.md
+          cat recouvrement.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soloni-resultats
+          path: |
+            soloni.md
+            recouvrement.md
+            results/

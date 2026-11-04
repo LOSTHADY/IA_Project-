@@ -26,7 +26,7 @@ jobs:
       - name: Dépendances (PyTorch CPU, plus léger que la version CUDA)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt accelerate ctranslate2 pytest pyflakes
+          pip install -r requirements.txt accelerate ctranslate2 pytest pyflakes omegaconf
 
       - name: Analyse statique
         run: python -m pyflakes bambara_voice eval scripts app tests

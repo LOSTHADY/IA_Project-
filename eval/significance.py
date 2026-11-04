@@ -130,13 +130,17 @@ def _series(label, kind, rows, id_key, hyp_key, ref_key, folded=False) -> Series
                   speakers if all(speakers) else None, refs)
 
 
-def load_series(report_path: str | Path) -> tuple[str, dict[str, Series]]:
+def load_series(report_path: str | Path,
+                exclude: set[str] | None = None) -> tuple[str, dict[str, Series]]:
     """Séries disponibles dans un rapport de eval.baselines ou eval.run_eval,
-    sous les mêmes libellés que dans eval.compare."""
+    sous les mêmes libellés que dans eval.compare. `exclude` : identifiants
+    d'énoncés à écarter (eval.recouvrement --ids-vus)."""
     report_path = Path(report_path)
     report = json.loads(report_path.read_text(encoding="utf-8"))
     name = report.get("nom") or report.get("architecture", report_path.stem)
     rows = _details(report_path)
+    if exclude:
+        rows = [r for r in rows if str(r.get("id", r.get("item"))) not in exclude]
     arch, maillon = report.get("architecture"), report.get("maillon")
 
     if maillon == "mt":
@@ -190,9 +194,17 @@ def _check_same_items(systems: list[Series], common: list[str]) -> None:
 
 
 def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np.ndarray]:
-    """Unité de tirage effective, et l'unité de chaque énoncé commun."""
+    """Unité de tirage effective, et l'unité de chaque énoncé commun.
+
+    `auto` ne tire les locuteurs qu'à partir de MIN_CLUSTERS : en dessous,
+    les grappes sont trop peu nombreuses pour un IC qui tienne (avec un seul
+    locuteur, chaque tirage le reprendrait tel quel, IC nul et écart
+    toujours « établi » ; avec deux, il n'y a que trois tirages distincts).
+    Il tire alors les énoncés, et l'IC ne vaut que pour ces voix.
+    `locuteur` reste possible à partir de deux, et refusé avec un seul."""
     speakers = systems[0].speakers
-    if unit == "auto":
+    auto = unit == "auto"
+    if auto:
         unit = "locuteur" if all(s.speakers for s in systems) else "enonce"
     if unit == "enonce":
         return unit, np.arange(len(common))
@@ -205,6 +217,11 @@ def _units(systems: list[Series], common: list[str], unit: str) -> tuple[str, np
         if any(other.get(i, by_id[i]) != by_id[i] for i in common):
             raise ValueError(f"« {s.label} » n'attribue pas les énoncés aux mêmes locuteurs")
     labels = sorted({by_id[i] for i in common})
+    if auto and len(labels) < MIN_CLUSTERS:
+        return f"enonce_{len(labels)}_locuteurs", np.arange(len(common))
+    if len(labels) < 2:
+        raise ValueError("un seul locuteur : impossible de tirer les locuteurs "
+                         "(--unite enonce, et l'IC ne vaut que pour cette voix)")
     index = {spk: k for k, spk in enumerate(labels)}
     return unit, np.array([index[by_id[i]] for i in common])
 
@@ -222,6 +239,8 @@ def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
     _check_same_items(systems, common)
     positions = [np.array([s.ids.index(i) for i in common]) for s in systems]
     unit, unit_of = _units(systems, common, unit)
+    peu_de_voix = int(unit.split("_")[1]) if unit.startswith("enonce_") else None
+    unit = "enonce" if peu_de_voix is not None else unit
     n_units = int(unit_of.max()) + 1
 
     # Statistiques additives : celles d'un locuteur sont la somme de celles de
@@ -239,6 +258,8 @@ def bootstrap(systems: list[Series], n_boot: int = 1000, seed: int = 0,
     observed = [s.score(agg.sum(axis=0)) for s, agg in zip(systems, per_unit)]
     out = {"n": len(common), "n_boot": n_boot, "unite": unit, "n_unites": n_units,
            "systemes": []}
+    if peu_de_voix is not None:
+        out["locuteurs_seulement"] = peu_de_voix
     for i, s in enumerate(systems):
         entry = {"score": observed[i], "ic": _percentiles(boots[i], alpha)}
         if i > 0:
@@ -288,6 +309,12 @@ def to_markdown(names: list[str], results: dict[str, dict], alpha: float = 0.05)
                      f"(trop étroits).**")
     else:
         text += ", en tirant les énoncés)."
+        n_voix = res.get("locuteurs_seulement")
+        if n_voix is not None:
+            voix = "un seul locuteur" if n_voix == 1 else f"{n_voix} locuteurs seulement"
+            text += (f" **{voix[0].upper() + voix[1:]}** : ces intervalles valent pour "
+                     f"{'cette voix' if n_voix == 1 else 'ces voix'}, pas pour les locuteurs "
+                     f"du bambara en général ({MIN_CLUSTERS} au moins pour généraliser).")
     if len(names) > 1:
         text += (f" Écarts mesurés par rapport à « {names[0]} », sur les mêmes énoncés ; "
                  f"n.s. : l'IC de l'écart contient zéro.")
@@ -308,9 +335,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--unite", choices=UNITS, default="auto",
                    help="unité tirée avec remise : énoncés ou locuteurs (auto : locuteurs "
                         "si toutes les sorties en portent un)")
+    p.add_argument("--exclure", type=Path, default=None, metavar="FICHIER",
+                   help="identifiants d'énoncés à écarter, un par ligne (ex. ceux déjà vus "
+                        "à l'entraînement, cf. eval.recouvrement --ids-vus)")
     args = p.parse_args(argv)
 
-    loaded = [load_series(path) for path in args.reports
+    exclude = None
+    if args.exclure:
+        exclude = {line.strip() for line in args.exclure.read_text(encoding="utf-8").splitlines()
+                   if line.strip()}
+        print(f"{len(exclude)} énoncés écartés ({args.exclure}).\n")
+    loaded = [load_series(path, exclude) for path in args.reports
               if not path.name.endswith(".details.jsonl")]
     if args.noms:
         by_name = {name: series for name, series in loaded}

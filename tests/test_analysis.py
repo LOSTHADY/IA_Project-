@@ -155,3 +155,15 @@ def test_rapport_run_eval_bout_en_bout(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Traduction directe (bout-en-bout)" in out
     assert "| Sous-groupe | Énoncés | Locuteurs | chrF++ |" in out
+
+
+def test_sous_groupes_par_interlocuteur(tmp_path):
+    """Jeu « dit » de l'atelier : la même chaîne comprend-elle aussi bien ce
+    qu'on dit à un ami qu'à une personne âgée ? (descriptif)."""
+    rows = [{**r, "register": "dit", "ref_transcript_bm": "",
+             "interlocuteur": "ami" if i < 3 else "aine"}
+            for i, r in enumerate(_run_eval_rows())]
+    path = _report(tmp_path / "cascade-20261016.json", {"architecture": "cascade"}, rows)
+    groups = analysis.analyse_report(path)[1]["par_groupe"]
+    assert {k: v["n"] for k, v in groups["interlocuteur"].items()} == {"aine": 2, "ami": 3}
+    assert "wer" not in groups["interlocuteur"]["ami"]  # pas de transcription

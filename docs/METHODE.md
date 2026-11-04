@@ -182,6 +182,64 @@ et locuteur. Ces chiffres décrivent : deux sous-groupes n'ont ni les mêmes
 nettement à part y apparaît aussi (micro défectueux, transcription à
 revoir).
 
+### Mettre un modèle en service : meilleur, pas « peut-être meilleur »
+
+Constat du 16 octobre (RESULTATS.md) : deux maillons choisis parce qu'ils
+gagnaient sur Jeli-ASR ont donné, au micro, un assistant moins bon. Un test
+qui ne ressemble pas à l'usage ne peut pas décider. D'où la règle, appliquée
+à tout changement de modèle ou d'assemblage (`eval/promotion.py`) :
+
+1. **Le jeu maison** (phrases du quotidien dites dans l'atelier, la phrase
+   française affichée pour référence) est coupé en deux moitiés fixes, par
+   phrase : **dev** et **test** (`eval.atelier.partition`).
+2. **On choisit sur le dev** : entre assemblages (§9a), entre checkpoints
+   d'un entraînement (`finetune_nllb.py --eval-file`, le dev tel que la
+   reconnaissance l'a transcrit).
+3. **On décide sur le test**, que ce choix n'a pas vu : le candidat remplace
+   le modèle en service seulement si l'IC à 95 % (bootstrap apparié) de son
+   écart de chrF++ est entièrement au-dessus de zéro. À égalité, rien ne
+   change.
+4. **On ne casse rien ailleurs** : sur les tests écrits (Bayelemabaga,
+   MAFAND), refus si le candidat y perd plus d'un point de façon établie.
+   Ces tests ne choisissent jamais.
+5. **Le sens français → bambara**, sans référence bambara dans le jeu maison,
+   change seulement si les jugements à l'aveugle de l'atelier le préfèrent
+   (test du signe).
+6. **Un professeur** (distillation, §9d) ne fabrique des données que s'il
+   traduit ce que la reconnaissance a entendu mieux que le modèle en
+   service, de façon établie sur le dev (`scripts/professeurs.py`) : un
+   professeur moins bon n'apprendrait rien à l'élève. Le modèle obtenu
+   passe ensuite par les points 3 et 4 comme les autres.
+7. **Apprendre de la voix des locuteurs** (`notebooks/progres.ipynb`) : les
+   phrases dites dans l'atelier deviennent des paires d'entraînement (ce que
+   la reconnaissance a entendu → la phrase française voulue). La moitié test
+   n'est jamais apprise ; le dev est coupé par phrase en « apprentissage »
+   (trois quarts) et « choix » (un quart, pour le checkpoint), par
+   `eval.atelier.usage`. Une telle version a vu une partie du dev : son
+   score de dev est flatté, et seul le test décide. Chaque séance
+   d'enregistrement ajoute des paires ; le test, lui, sert à chaque
+   décision et doit être renouvelé de temps en temps (nouvelles phrases).
+8. **La mémoire** (`bambara_voice/memoire.py`) n'est pas un réentraînement :
+   des souvenirs (ce que la reconnaissance a entendu → le sens voulu), tirés
+   de l'atelier et des corrections faites dans la démo (« Retiens-le »), plus
+   les mots du lexique. Un réentraînement déplace tous les poids et ne
+   garantit rien ; un souvenir ne sert qu'aux phrases qui lui ressemblent,
+   dès la fois suivante. Ses phrases de l'atelier entrent en service si elles
+   font mieux sur les phrases redites (test) sans dégrader les phrases jamais
+   dites (`eval/redire.py`) ; les corrections du locuteur, elles, sont
+   toujours retenues : c'est lui qui dit ce qu'il voulait dire.
+9. **L'étage de la voix** (`notebooks/voix.ipynb`) : Soloni affiné sur les
+   enregistrements au texte exact (lectures, tours corrigés), réparti une fois
+   pour toutes par phrase : 70 % pour apprendre, 15 % pour choisir le
+   checkpoint, 15 % pour le test. Deux conditions de mise en service : moins
+   d'erreurs sur les lectures de test, et une meilleure compréhension des
+   phrases du jeu maison (moitié test, avec le traducteur en service).
+
+Chaque décision et ses preuves sont consignées dans `retenu.json`. Limites :
+le test sert à chaque décision, ce qui use sa fraîcheur ; il faut le
+renouveler par de nouvelles phrases et de nouveaux locuteurs. Et avec moins
+de 8 locuteurs, les IC sont tirés par énoncé : ils valent pour ces voix.
+
 ## 6. Spécificités du bambara à traiter
 
 - **Langue à tons non notés.** L'orthographe n'écrit pas les tons : source

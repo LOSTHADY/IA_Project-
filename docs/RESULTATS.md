@@ -357,3 +357,363 @@ Jeli-ASR (test), PyTorch fp32 sur les processeurs de GitHub.
   conditions d'enregistrement ne sont pas ceux de l'assistant, et il servira
   à l'entraînement en phase 3. Les chiffres définitifs se mesureront sur le
   jeu de test maison (phase 2).
+
+## Phase 3 — fine-tuning (en cours)
+
+### Whisper-small multi-tâche, une époque
+
+Notebook `phase3_finetuning.ipynb` sur Colab (GPU T4), 6 octobre 2026 :
+Jeli-ASR, `--task both` (transcription bambara et traduction française),
+une époque, lot de 8 × accumulation 2, taux d'apprentissage 1e-5.
+
+| | |
+|---|---|
+| Étapes | 3 781 |
+| Durée | 2 h 52 (1,9 s par étape) |
+| Perte d'entraînement moyenne | 2,97 |
+| WER de validation (150 énoncés pris dans `train`) | **44,0 %** |
+
+À titre indicatif, sur la partition de test de Jeli-ASR (phase 1) : 160,3 %
+pour Whisper non affiné, 58,2 % pour MMS. Le 44,0 % porte sur une
+validation, avec d'autres énoncés : il ne se compare pas directement. Le
+chiffre de référence est celui de l'évaluation sur les 300 énoncés de test
+(§6 du notebook, ci-dessous), apparié avec MMS sur les mêmes énoncés.
+
+Au chargement du meilleur checkpoint, transformers signale
+`proj_out.weight` manquant : la couche de sortie de Whisper partage ses
+poids avec les plongements du décodeur, et n'est donc pas enregistrée à
+part. L'évaluation sur le test le confirmera (un WER aberrant le
+trahirait).
+
+**Incidents de Drive (6 au 10 octobre).** Le modèle final et les derniers
+checkpoints de cet entraînement ne sont jamais arrivés sur Drive. Cause
+probable : Drive plein. Les checkpoints remplacés pendant l'entraînement
+(environ 3 Go chacun, un toutes les 500 étapes) vont dans la corbeille, qui
+compte dans les 15 Go : au checkpoint 3000, quatre checkpoints supprimés et
+deux gardés font déjà plus de 17 Go. Colab ne signale rien ; les fichiers
+restent seulement visibles depuis la session qui les a écrits.
+
+- 7 octobre : reprise au checkpoint 3000, auquel il manquait l'état de
+  l'optimiseur. Le Trainer est reparti sans prévenir avec un optimiseur et
+  un plan de taux d'apprentissage neufs (second préchauffage, fin au taux
+  maximal) : WER de validation 48,9 % à la fin. Ce modèle n'est pas non plus
+  arrivé sur Drive.
+- 10 octobre : la reprise ignore désormais les checkpoints incomplets. Elle
+  est partie du checkpoint 2500, complet, avec le bon plan de taux
+  d'apprentissage. WER de validation : 58,0 % à l'étape 3000, 47,3 % à
+  3500, 46,8 % à la fin (3781). Le modèle retenu est le meilleur selon la
+  validation (à confirmer : cellule « Quel modèle Whisper est sur Drive ? »).
+
+Corrigé dans le notebook : place libre vérifiée avant chaque entraînement,
+attente de la synchronisation de Drive (30 minutes au plus, au lieu de 24 h
+par défaut), corbeille à vider, et une évaluation est refaite quand son
+modèle a été réentraîné depuis.
+
+### Premiers résultats sur le test, avant le fine-tuning de NLLB
+
+**Dépassés** : obtenus avec le modèle Whisper du 7 octobre (reprise
+défectueuse, voir ci-dessus), qui n'existe plus. Gardés pour mémoire ; à
+refaire avec le modèle du 10 octobre. Les lignes MMS + NLLB, sans Whisper,
+restent valables.
+
+Notebook §6, 7 octobre 2026, GPU T4 : Jeli-ASR, partition de test, les
+mêmes 300 énoncés qu'en phase 1 (même graine). NLLB n'est pas encore affiné :
+la cascade utilise le modèle d'origine.
+
+| | MMS + NLLB (zero-shot) | Cascade : Whisper affiné + NLLB | Bout-en-bout : Whisper affiné |
+|---|---|---|---|
+| WER strict | 58,2 % | 56,3 % | — |
+| WER relâché | 54,8 % | 54,2 % | — |
+| CER strict | 25,7 % | 29,3 % | — |
+| chrF++ du français, depuis l'audio | 18,03 | 18,45 | **19,93** |
+| BLEU, depuis l'audio | 0,91 | 1,35 | 3,03 |
+| Perte due à l'ASR (chrF++) | 4,89 | 4,47 | — |
+| Latence moyenne (T4) | 1,59 s | 1,10 s | 0,48 s |
+
+Le chrF++ porte sur 293 énoncés (ceux qui ont une traduction de référence).
+
+- **Reconnaissance.** Whisper affiné fait à peine mieux que MMS en WER
+  (−1,9 point) et moins bien en CER (+3,6 points) : il trouve un peu plus de
+  mots entiers, mais ses erreurs s'éloignent davantage de la référence. Le
+  44 % de validation était donc optimiste : cette validation est prise dans
+  `train`, probablement avec les mêmes locuteurs.
+- **Comparaison centrale.** Le bout-en-bout dépasse la cascade de 1,5 point
+  de chrF++ (19,9 contre 18,4), en deux fois moins de temps. Écart à
+  confirmer par le test de significativité, et provisoire : NLLB affiné
+  devrait surtout profiter à la cascade.
+- **À refaire.** Le rapport de la cascade a été écrit hors de Drive (bug
+  d'apostrophe dans le libellé, corrigé) : ses détails phrase par phrase
+  sont perdus, et avec eux la significativité et l'analyse d'erreurs. Il
+  sera recalculé à la prochaine session (8 minutes).
+
+### Soloni (RobotsMali), troisième reconnaissance de la cascade
+
+Workflow « Soloni dans la cascade », 10 octobre 2026, processeurs de GitHub :
+`RobotsMali/soloni-114m-tdt-ctc-v3` (Parakeet de NVIDIA, 114 millions de
+paramètres, affiné par RobotsMali ; décodeur TDT par défaut), suivi de NLLB
+d'origine. Mêmes 300 énoncés de test de Jeli-ASR (graine 0) ; MMS rejoué
+dans la même exécution, avec le même code.
+
+| | MMS + NLLB | Soloni + NLLB | Écart (IC à 95 %) |
+|---|---|---|---|
+| WER strict | 58,2 % | **45,5 %** | −12,7 [−16,0 ; −9,7], p < 0,002 |
+| WER relâché | 54,8 % | **43,4 %** | −11,4 [−14,7 ; −8,4], p < 0,002 |
+| CER strict | 25,7 % | 24,7 % | |
+| chrF++ du français, depuis l'audio | 18,0 | **20,5** | +2,4 [1,3 ; 3,6], p < 0,002 |
+| Perte due à l'ASR (chrF++) | 4,9 | **2,5** | |
+| Latence totale, CPU | 8,8 s | **5,7 s** | |
+
+- **Reconnaissance.** Soloni est de loin le meilleur des trois : 13 points
+  de WER de moins que MMS, et 11 de moins que notre Whisper affiné (56,3 %,
+  modèle du 7 octobre, mesuré à part). Il divise par deux ce que les erreurs
+  de reconnaissance coûtent à la traduction.
+- **Comparaison centrale.** Avec Soloni, la cascade atteint 20,5 de chrF++,
+  au-dessus du bout-en-bout du 7 octobre (19,9). Les deux n'ont pas été
+  mesurés dans la même exécution : le test apparié se fera dans le notebook
+  (§6), avec le Whisper réentraîné le 10 octobre.
+- **Déploiement.** La reconnaissance prend 0,58 s par énoncé sur un
+  processeur, pour 114 millions de paramètres. C'est NLLB qui domine la
+  latence de la cascade (environ 5 s sur CPU).
+
+**Données d'entraînement de Soloni.** D'après les fiches des modèles : v0,
+l'ancêtre de toutes les versions, a été affiné sur bam-asr-early (37 h,
+tirées à 87 % de Jeli-ASR) ; v1 et v3 sur Kunkado (environ 40 h relues) ; v2
+sur African Next Voices (100 h). `eval.recouvrement` compte nos phrases de
+test qui figurent telles quelles, après repli orthographique, dans un jeu
+d'entraînement :
+
+| Jeu d'entraînement | Phrases de test d'au moins 5 mots retrouvées | Toutes longueurs |
+|---|---|---|
+| bam-asr-early (Soloni v0) | 63 sur 256 (24,6 %) | 89 sur 300 |
+| Jeli-ASR, partition train (notre Whisper) | 62 sur 256 (24,2 %) | 87 sur 300 |
+
+Un quart des phrases de test longues de Jeli-ASR figurent donc déjà dans sa
+propre partition d'entraînement : à écrire dans les limites du mémoire, car
+cela vaut pour notre Whisper comme pour Soloni. Soloni n'a pas vu plus de
+nos phrases que notre Whisper, mais MMS n'en a vu aucune. D'où la même
+comparaison sans les 89 énoncés vus (workflow « Soloni, phrases jamais
+vues ») :
+
+| Sur 211 énoncés jamais vus | MMS + NLLB | Soloni + NLLB | Écart (IC à 95 %) |
+|---|---|---|---|
+| WER strict | 61,0 % | **46,4 %** | −14,6 [−17,5 ; −11,8], p < 0,002 |
+| chrF++ du français, depuis l'audio | 17,9 | **20,7** | +2,7 [1,5 ; 4,1], p < 0,002 |
+
+L'avance de Soloni ne vient pas des phrases déjà vues : elle est même un
+peu plus nette sans elles.
+
+### Résultats complets : cascade contre bout-en-bout (15 octobre)
+
+Notebook « Tout exécuter », GPU T4. Whisper : le modèle du 10 octobre,
+checkpoint 3781 (WER de validation 46,8 %). NLLB : une époque par sens sur
+Bayelemabaga, Adafactor (bm→fr, puis fr→bm en 1 h 30, chrF++ de validation
+34,3). Mêmes 300 énoncés de test de Jeli-ASR qu'en phase 1.
+
+**Reconnaissance (WER strict).**
+
+| MMS | Whisper affiné | Soloni |
+|---|---|---|
+| 58,2 % [54,6 ; 62,0] | 50,3 % [41,4 ; 64,7] | **45,5 %** [42,3 ; 48,8] |
+
+L'intervalle de Whisper est très large : quelques hallucinations très
+longues pèsent lourd. Ni l'écart Whisper–MMS (−7,9 [−15,7 ; 4,7]) ni l'écart
+Soloni–Whisper (−4,8 [−18,6 ; 3,6]) ne sont établis ; seul Soloni–MMS l'est.
+
+**Traduction seule (chrF++, 500 phrases de Bayelemabaga).**
+
+| | NLLB d'origine | NLLB affiné | Écart (IC à 95 %) |
+|---|---|---|---|
+| bambara → français | 21,8 | **27,8** | +6,0 [5,0 ; 7,0] |
+| français → bambara | 25,7 | **29,9** | +4,2 [3,2 ; 5,3] |
+
+Sur les phrases de Jeli-ASR (oral), le gain est moindre : 22,6 → 26,1 vers
+le français, 29,8 → 30,7 vers le bambara.
+
+**Comparaison centrale : le français obtenu depuis l'audio (chrF++, 293
+énoncés).**
+
+| Système | chrF++ | Écart avec le bout-en-bout (IC à 95 %) | Latence (T4) |
+|---|---|---|---|
+| Bout-en-bout : Whisper affiné | 20,9 | — | 0,50 s |
+| Cascade : Whisper affiné + NLLB affiné | 22,4 | +1,4 [−0,7 ; 3,5], n.s. | 1,47 s |
+| Cascade : Soloni + NLLB affiné | **23,7** | **+2,7 [0,9 ; 4,7], p = 0,004** | 0,69 s |
+
+- **Avec NLLB affiné, la cascade l'emporte**, nettement avec Soloni :
+  +2,7 points de chrF++ sur le bout-en-bout, écart établi. Avec Whisper
+  pour reconnaître, l'écart (+1,4) n'est pas établi.
+- **Le fine-tuning de NLLB fait l'essentiel** : la même cascade Whisper
+  passe de 18,9 à 22,4 (+3,5) ; contre la référence MMS + NLLB d'origine,
+  +4,3 [2,9 ; 5,7].
+- **Ce que la reconnaissance coûte à la traduction** : 3,2 points avec
+  Soloni, 4,5 avec Whisper (chrF++ depuis le texte de référence : 26,9).
+- **Le bout-en-bout reste le plus rapide**, mais la cascade avec Soloni
+  n'est plus lente que de 0,2 s.
+
+**Chaîne complète, 20 énoncés (GPU).** Cascade 5,8 s par tour (dont
+reconnaissance 1,5, LLM 1,5, traductions 1,4 et 1,1, synthèse 0,3), bout-
+en-bout 4,1 s. Les erreurs de compréhension du bout-en-bout se propagent
+sans recours (« miniyanba ni den tɛ mɔgɔ min fɛ » → « grand python c'est
+notre enfant… ») ; dans la cascade, une traduction sortante est partie en
+boucle (« A y'a nyininka ko a y'a nyininka ko… »).
+
+### Test au micro (15 octobre, locuteur natif)
+
+Démo Gradio, cascade, quelques dizaines d'échanges. Appréciation de
+l'auteur, locuteur natif :
+
+- **Reconnaissance** : très bonne sur les phrases simples. Limites : le
+  mélange bambara–français (voire anglais), courant à l'oral, et les termes
+  familiers, surtout chez les jeunes (« wai » pour saluer, « yoh »), absents
+  des corpus.
+- **Bambara → français** : le maillon le plus faible ; il lui arrive de
+  déformer entièrement la phrase, et toute la suite de la chaîne en pâtit.
+- **LLM** : rien à signaler.
+- **Français → bambara** : mêmes défauts, moins graves. Les nombres en
+  particulier : « compte jusqu'à vingt » donnait « … kɔnɔntɔn, tan, tan,
+  tan, tan ni fila … », sans 11 ni 19.
+- **Synthèse** : accent correct, quelques mots difficiles à comprendre.
+- **Souhait** : des réponses un peu plus longues.
+
+Corrigé dans la foulée, côté assistant (`PipelineConfig`) :
+
+- **nombres écrits par règle** (`bambara_voice.nombres`) : les nombres
+  français en lettres passent en chiffres, que NLLB recopie, puis les
+  chiffres deviennent des nombres bambara (21 → « mugan ni kelen »), que la
+  synthèse sait lire ;
+- **traduction refaite quand elle boucle**, en interdisant de répéter un
+  trigramme (`MTConfig.retry_loops`, aussi `eval.baselines --relance-boucles`
+  pour en mesurer l'effet) ;
+- **réponses plus longues** : jusqu'à 5 phrases au lieu de 3, chacune
+  traduite à part (NLLB est entraîné sur des phrases isolées).
+
+### Second tour : NLLB v2 (16 octobre)
+
+NLLB v2 : reprise de la v1, Bayelemabaga + traductions françaises de
+Jeli-ASR, une époque par sens. Mêmes énoncés de test qu'au §8.
+
+| chrF++ | NLLB v1 | NLLB v2 | Écart (IC à 95 %) |
+|---|---|---|---|
+| Bayelemabaga, bambara → français | 27,8 | 28,8 | +1,0 [0,3 ; 1,8] |
+| Bayelemabaga, français → bambara | 29,9 | 30,7 | +0,8 [0,1 ; 1,6] |
+| Jeli-ASR, bambara → français | 26,1 | 37,5 | +11,4 [10,0 ; 12,9] |
+| Jeli-ASR, français → bambara | 30,7 | 36,3 | +5,6 [4,6 ; 6,7] |
+| Cascade Soloni depuis l'audio (Jeli-ASR) | 23,7 | 31,2 | +7,5 [6,1 ; 9,0] |
+
+Le gain sur Jeli-ASR est surestimé : 24 % des phrases longues de son test
+figurent aussi dans son entraînement, que la v2 a vu. Sur Bayelemabaga, où
+rien n'a changé dans les données, le gain est d'un point.
+
+**Le jeu maison** (atelier, 555 phrases dites par 2 locuteurs, français de
+référence) : cascade Soloni + NLLB v2 26,7, bout-en-bout Whisper 12,9. La
+v1 n'y a pas été mesurée.
+
+**Au micro, l'auteur juge la nouvelle démo nettement moins bonne**, sur les
+mêmes enregistrements que la veille, compréhension comprise. Or la démo a
+changé de deux maillons à la fois : Whisper + NLLB v1 le 15, Soloni +
+NLLB v2 le 16, chacun choisi parce qu'il gagnait sur Jeli-ASR. Rien ne dit
+lequel a dégradé la parole quotidienne, ni si c'est le cas sur une mesure.
+Deux causes établies :
+
+- **Soloni rend parfois « <tag> » seul**, sur des énoncés courts (2 sur les
+  8 énoncés affichés du test de la chaîne) : NLLB le traduisait « Tag » et
+  le LLM répondait qu'il ne pouvait pas aider. Les annotations sont
+  désormais retirées avant la traduction ; s'il ne reste rien, l'assistant
+  demande de répéter.
+- **Le choix des modèles se faisait sur Jeli-ASR**, pas sur la voix de
+  l'utilisateur. Le §9a mesure maintenant les quatre assemblages (Whisper ou
+  Soloni, NLLB v1 ou v2) sur le jeu maison et retient le meilleur pour la
+  démo.
+
+Enfin, avec moins de 8 locuteurs, les IC sont désormais tirés par énoncé :
+avec 1 ou 2 locuteurs, le tirage par locuteur donnait un IC nul ou presque,
+et n'importe quel écart paraissait établi.
+
+### Sur la voix de l'utilisateur : choix des maillons, puis NLLB v3 (17 octobre)
+
+Jeu maison de l'atelier : 555 énoncés de la vie courante, 2 locuteurs, coupés
+par phrase en dev (choix) et test (verdict) ; chrF++ du français compris
+depuis l'audio, sans LLM (§9a).
+
+| Assemblage | chrF++ dev | chrF++ test |
+|---|---|---|
+| Soloni + NLLB v1 | **27,8** | **28,2** |
+| Soloni + moyenne v1/v2 | 27,1 | 27,3 |
+| Soloni + NLLB v2 | 26,7 | 26,7 |
+| Whisper + NLLB v2 | 21,0 | 20,5 |
+| Whisper + NLLB v1 (en service, démo du 15) | 20,6 | 20,6 |
+| Whisper + moyenne v1/v2 | 20,4 | 20,2 |
+
+- **La reconnaissance décide de tout** : Soloni dépasse le Whisper affiné de
+  7,7 points sur le test (272 énoncés, [5,5 ; 9,7], p < 0,001), alors que
+  leur écart n'était pas établi sur Jeli-ASR. **Soloni + NLLB v1 entre en
+  service** (première décision de `eval.promotion`).
+- **NLLB v2 recule sur la parole quotidienne** : 1,5 point sous la v1 à
+  reconnaissance égale, la moyenne des poids entre les deux. Le second tour,
+  à moitié fait de récits de griots, a tiré le modèle vers ce registre :
+  l'hypothèse H2 du rapport de recherche est confirmée ; H1 (Soloni
+  inadapté aux phrases courtes) est écartée une fois les balises <tag>
+  retirées.
+- La démo jugée moins bonne le 16 (Soloni + v2) comprenait donc mieux que
+  celle du 15 (Whisper + v1) : la différence ressentie venait d'ailleurs,
+  probablement des réponses (NLLB v2 français → bambara, qui reste hors
+  service tant que les jugements à l'aveugle ne le préfèrent pas).
+
+**NLLB v3** (bambara → français, départ de la v1) : 24 221 paires (rappel de
+Bayelemabaga, MAFAND, exemples du Bamadaba, GATITOS, Jeli-ASR), 2 époques,
+1 h 08 sur T4, checkpoint choisi sur le dev maison transcrit par Soloni
+(273 énoncés). Le chrF++ du dev n'a jamais dépassé 27,6 (de 26,3 à 27,6
+selon les étapes), sous les 27,8 de la v1 au §9a. Les données publiques,
+même plus proches du quotidien que les griots, n'améliorent pas la
+compréhension de cette parole-là : il faut des paires du bon domaine. Le
+quota de Colab s'est arrêté pendant les contrôles écrits. Refus consigné le
+19 octobre : 26,9 sur le dev, contre 27,8 pour la v1.
+
+### Reconnaissances de RobotsMali et professeurs (19 octobre)
+
+Même jeu maison (555 énoncés, 2 locuteurs). Le §9a, refait avec les deux
+autres reconnaissances de RobotsMali, ne change rien : aucun candidat ne
+fait mieux que Soloni + NLLB v1 sur le dev.
+
+| Assemblage | chrF++ dev | chrF++ test |
+|---|---|---|
+| Soloni + NLLB v1 (en service) | **27,8** | 28,2 |
+| Soloni, branche CTC + NLLB v1 | 27,7 | 29,4 |
+| Soloba + NLLB v1 | 27,5 | 28,1 |
+| Soloni + moyenne v1/v2 | 27,1 | 27,3 |
+| Soloni + NLLB v3 | 26,9 | 26,8 |
+| Soloni + NLLB v2 | 26,7 | 26,7 |
+| Whisper + NLLB v1 | 20,6 | 20,6 |
+
+La branche CTC de Soloni gagne 1,2 point sur le test mais pas sur le dev :
+la règle ne la retient pas, et ce serait choisir sur le test que de la
+retenir maintenant.
+
+**Professeurs (§9d)** : chacun traduit les mêmes transcriptions de Soloni
+que la v1 (chrF++ dev).
+
+| Traducteur | chrF++ dev |
+|---|---|
+| NLLB v1 (en service, mesure du §9a) | **27,8** |
+| NLLB v1, témoin passé par le script des professeurs | 27,8 |
+| NLLB-200 3.3B, non affiné | 27,2 |
+| NLLB-200 1.3B distillé, non affiné | 26,1 |
+| MADLAD-400 3B | 19,2 |
+
+- Le témoin retrouve exactement la mesure du §9a : la comparaison est fiable.
+- Aucun professeur ne fait mieux que la v1 (le meilleur, NLLB 3.3B :
+  −0,6 [−2,1 ; 0,9]) : la v4 n'a pas été entraînée, et aucune heure de GPU
+  n'a été dépensée pour rien. Notre NLLB 600M affiné vaut, sur cette parole,
+  un NLLB cinq fois plus gros non affiné.
+- **Tout plafonne vers 27–28** : quatre traducteurs affinés différemment (v1,
+  v2, v3, moyenne), deux modèles cinq fois plus gros, et trois
+  reconnaissances de RobotsMali tombent entre 26 et 28. Quand des modèles
+  aussi différents butent au même niveau, la limite est probablement
+  ailleurs que dans chacun d'eux : dans ce que la reconnaissance transmet
+  (les trois reconnaissances de RobotsMali ont appris sur les mêmes
+  corpus), ou dans la mesure elle-même. La référence est la phrase française
+  affichée, alors que la phrase est dite librement en bambara : une
+  compréhension juste mais formulée autrement est comptée comme une erreur
+  partielle, et le score d'un système parfait est inconnu.
+
+Les traducteurs commerciaux en ligne ont été exclus comme professeurs
+(RECHERCHE.md, licences).

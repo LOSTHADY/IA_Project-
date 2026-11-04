@@ -9,6 +9,10 @@ Les modèles CTC (wav2vec2, MMS) sont aussi pris en charge, en transcription
 seule : `facebook/mms-1b-all` couvre le bambara sans fine-tuning et fournit la
 référence zero-shot la plus sérieuse côté ASR.
 
+Les modèles NeMo aussi (`kind="nemo"`), en transcription seule : Soloni, de
+RobotsMali, est un Parakeet de NVIDIA (114 millions de paramètres) affiné sur
+le bambara. NeMo est une dépendance lourde, importée seulement pour eux.
+
 Pour le déploiement CPU, un Whisper converti par `scripts/export_cpu.py`
 tourne sous CTranslate2 (`backend="ctranslate2"`, int8) : même modèle, mêmes
 tokens de langue et de tâche, 4 fois plus léger. Le décodage va environ deux
@@ -64,6 +68,8 @@ class SpeechRecognizer:
             self._load_ct2()
         elif self.config.kind == "ctc":
             self._load_ctc()
+        elif self.config.kind == "nemo":
+            self._load_nemo()
         else:
             self._load_whisper()
 
@@ -113,6 +119,65 @@ class SpeechRecognizer:
         ).to(self.device)
         self._model.eval()
 
+    def _load_nemo(self) -> None:
+        import torch
+        from nemo.collections.asr.models import ASRModel
+
+        cfg = self.config
+        device = torch.device(self.device)
+        logger.info("Chargement ASR NeMo %s (décodeur %s) sur %s",
+                    cfg.model_id, cfg.nemo_decoder or "par défaut", self.device)
+        if cfg.model_id.endswith(".nemo"):
+            model = ASRModel.restore_from(cfg.model_id, map_location=device)
+        else:
+            model = self._load_nemo_hub(ASRModel, device)
+        # Réglage du décodeur TDT, gardé pour y revenir après une proposition
+        # du décodeur CTC (alternatives).
+        self._decodage_tdt = getattr(model.cfg, "decoding", None)
+        if cfg.nemo_decoder == "ctc":
+            model.change_decoding_strategy(decoder_type="ctc",
+                                           decoding_cfg=model.cfg.aux_ctc.decoding)
+        elif device.type == "cuda" and hasattr(model, "joint"):
+            # Fiche de Soloni : les graphes CUDA du décodeur TDT échouent sur
+            # certains GPU (« CUDA error: invalid argument »). Un modèle CTC
+            # seul (Soloba) n'a ni ce décodeur ni ce réglage : NeMo refuserait
+            # la clé inconnue.
+            from omegaconf import open_dict
+
+            decoding = model.cfg.decoding
+            with open_dict(decoding):
+                decoding.greedy.use_cuda_graph_decoder = False
+            model.change_decoding_strategy(decoding_cfg=decoding)
+            self._decodage_tdt = decoding
+        model.eval()
+        self._model = model
+
+    def _load_nemo_hub(self, ASRModel, device):
+        """Depuis Hugging Face. Un modèle enregistré avec NeMo 2.5 (Soloni)
+        ne se charge plus tel quel avec une version récente : le schéma de
+        décodage exige `key_phrase_items_list`, absent de sa configuration.
+        On l'ajoute avant le chargement, comme le fait la fiche de Soloni
+        (NVIDIA-NeMo/Speech#15658). Constaté avec NeMo 3.0."""
+        import tempfile
+
+        from omegaconf import OmegaConf
+
+        model_id = self.config.model_id
+        conf = ASRModel.from_pretrained(model_id, return_config=True)
+        OmegaConf.set_struct(conf, False)
+        trees = [OmegaConf.select(conf, f"decoding.{d}.boosting_tree") for d in ("greedy", "beam")]
+        old = [t for t in trees if t is not None and "key_phrase_items_list" not in t]
+        if not old:
+            return ASRModel.from_pretrained(model_name=model_id, map_location=device)
+        logger.warning("%s : configuration d'un ancien NeMo, corrigée avant chargement", model_id)
+        for tree in old:
+            tree.key_phrase_items_list = None
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            OmegaConf.save(conf, path)
+            return ASRModel.from_pretrained(model_name=model_id, override_config_path=str(path),
+                                            map_location=device, strict=False)
+
     def transcribe(self, audio: np.ndarray | str | Path) -> ASRResult:
         self._ensure_loaded()
         cfg = self.config
@@ -122,6 +187,8 @@ class SpeechRecognizer:
 
         if cfg.backend == "ctranslate2":
             text = self._decode_ct2(audio)
+        elif cfg.kind == "nemo":
+            text = self._decode_nemo(audio)
         else:
             inputs = self._processor(
                 audio, sampling_rate=cfg.sample_rate, return_tensors="pt"
@@ -137,6 +204,37 @@ class SpeechRecognizer:
             audio_seconds=len(audio) / cfg.sample_rate,
         )
 
+    def alternatives(self, audio: np.ndarray | str | Path) -> list[str]:
+        """Ce que la reconnaissance entend, par chacun de ses décodeurs. Soloni
+        (hybride TDT/CTC) en a deux, qui diffèrent souvent d'un ou deux mots :
+        autant de propositions à choisir pour qui corrige (atelier, onglet
+        Discuter). La transcription habituelle d'abord, sans doublon ; une
+        seule pour les autres modèles."""
+        if isinstance(audio, (str, Path)):
+            audio = load_audio(audio, self.config.sample_rate)
+        out = [self.transcribe(audio).text]
+        model, cfg = self._model, self.config
+        if (cfg.kind != "nemo" or cfg.backend == "ctranslate2" or not hasattr(model, "joint")
+                or getattr(getattr(model, "cfg", None), "aux_ctc", None) is None):
+            return out
+        ctc = cfg.nemo_decoder == "ctc"
+        self._changer_decodeur("rnnt" if ctc else "ctc")
+        try:
+            autre = normalize(self._decode_nemo(audio), lower=False)
+        finally:
+            self._changer_decodeur("ctc" if ctc else "rnnt")
+        if autre and autre not in out:
+            out.append(autre)
+        return out
+
+    def _changer_decodeur(self, decodeur: str) -> None:
+        model = self._model
+        if decodeur == "ctc":
+            model.change_decoding_strategy(decoder_type="ctc",
+                                           decoding_cfg=model.cfg.aux_ctc.decoding)
+        else:
+            model.change_decoding_strategy(decoder_type="rnnt", decoding_cfg=self._decodage_tdt)
+
     def _decode_ctc(self, inputs) -> str:
         import torch
 
@@ -146,6 +244,24 @@ class SpeechRecognizer:
             logits = self._model(**inputs).logits
         ids = torch.argmax(logits, dim=-1)
         return self._processor.batch_decode(ids)[0]
+
+    def _decode_nemo(self, audio: np.ndarray) -> str:
+        import tempfile
+
+        import soundfile as sf
+
+        if self.config.task == "translate":
+            raise ValueError("un modèle NeMo (Soloni) ne sait que transcrire")
+        # Un fichier temporaire : la seule entrée que toutes les versions de
+        # NeMo acceptent.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audio.wav")
+            sf.write(path, audio, self.config.sample_rate)
+            out = self._model.transcribe([path], batch_size=1, verbose=False)
+        if isinstance(out, tuple):  # modèles hybrides, anciennes versions : (meilleures, toutes)
+            out = out[0]
+        hyp = out[0]
+        return getattr(hyp, "text", hyp)  # Hypothesis récent, str autrefois
 
     def _decode_whisper(self, inputs) -> str:
         import torch

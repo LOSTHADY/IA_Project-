@@ -270,6 +270,9 @@ def _mt_args(sp) -> None:
                     help=f"traduction limitée à RATIO × la source + marge, en jetons "
                          f"(défaut : {MTConfig().max_length_ratio:g} ; 0 : pas de plafond, "
                          f"comme en phase 1)")
+    sp.add_argument("--relance-boucles", action="store_true",
+                    help="retraduire, sans répéter de trigramme, une sortie qui boucle "
+                         "(réglage de l'assistant ; pas par défaut en évaluation)")
 
 
 def _ratio(args) -> float | None:
@@ -281,18 +284,18 @@ def _ratio(args) -> float | None:
 
 def _mt_engine(args) -> dict:
     return {"backend": args.backend, "compute_type": args.compute_type,
-            "max_length_ratio": _ratio(args)}
+            "max_length_ratio": _ratio(args), "retry_loops": args.relance_boucles}
 
 
 def _mt_suffix(args) -> str:
     """Le nom ne signale que l'écart au réglage par défaut."""
-    if args.plafond is None:
-        return ""
-    return f" [plafond ×{args.plafond:g}]" if args.plafond else " [sans plafond]"
+    suffix = "" if args.plafond is None else (
+        f" [plafond ×{args.plafond:g}]" if args.plafond else " [sans plafond]")
+    return suffix + (" [relance des boucles]" if args.relance_boucles else "")
 
 
 def _mt_models(args) -> dict:
-    return {"plafond_longueur": _ratio(args)}
+    return {"plafond_longueur": _ratio(args), "relance_boucles": args.relance_boucles}
 
 
 # --- ligne de commande --------------------------------------------------------
@@ -315,12 +318,13 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
     from bambara_voice.mt import Translator
 
     e2e = args.task == "translate"
-    if e2e and (args.with_mt or args.kind == "ctc"):
-        raise SystemExit("--task translate : Whisper seul, sans --with-mt ni modèle CTC")
+    if e2e and (args.with_mt or args.kind != "whisper"):
+        raise SystemExit("--task translate : Whisper seul, sans --with-mt ni modèle CTC ou NeMo")
     ds, cols, idx, corpus = _load(args, need_audio=True, need_fr=e2e)
     language = None if args.language == "none" else args.language
     asr_cfg = ASRConfig(model_id=args.model, task=args.task, kind=args.kind,
                         language=language, target_lang=args.target_lang,
+                        nemo_decoder=args.nemo_decoder,
                         backend=args.backend, compute_type=args.compute_type)
     recognizer = SpeechRecognizer(asr_cfg, args.device)
     translator = None
@@ -341,7 +345,11 @@ def cmd_asr(args) -> tuple[dict, list[dict]]:
                         "backend": args.backend,
                         **({"compute_type": args.compute_type}
                            if args.backend == "ctranslate2" else {}),
-                        "language": language, "target_lang": args.target_lang,
+                        # La langue imposée ne concerne que Whisper.
+                        "language": language if args.kind == "whisper" else None,
+                        "target_lang": args.target_lang,
+                        **({"nemo_decoder": args.nemo_decoder or "défaut"}
+                           if args.kind == "nemo" else {}),
                         **({"mt_in": args.mt_model, **_mt_models(args)}
                            if args.with_mt else {})},
             **report}, rows
@@ -418,12 +426,14 @@ def main(argv: list[str] | None = None) -> None:
     sp = sub.add_parser("asr", help="entrée de la chaîne : cascade ou bout-en-bout")
     corpus_args(sp, JELI_ASR, 300)
     sp.add_argument("--model", default="openai/whisper-small")
-    sp.add_argument("--kind", choices=["whisper", "ctc"], default="whisper")
+    sp.add_argument("--kind", choices=["whisper", "ctc", "nemo"], default="whisper")
     sp.add_argument("--task", choices=["transcribe", "translate"], default="transcribe",
                     help="translate : bout-en-bout, Whisper produit le français")
     sp.add_argument("--language", default="sw",
                     help="token de langue Whisper ('none' : détection automatique)")
     sp.add_argument("--target-lang", default=None, help="adaptateur MMS, ex. bam")
+    sp.add_argument("--nemo-decoder", choices=["ctc"], default=None,
+                    help="NeMo hybride (Soloni) : décodeur CTC au lieu du TDT par défaut")
     sp.add_argument("--with-mt", action="store_true",
                     help="cascade complète jusqu'au français, et propagation d'erreurs")
     _mt_args(sp)

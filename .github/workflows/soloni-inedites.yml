@@ -1,0 +1,86 @@
+# Soloni contre MMS sur les seules phrases de test jamais vues à
+# l'entraînement. Ne relance aucun modèle : reprend les rapports d'une
+# exécution de « Soloni dans la cascade ».
+#
+# Un quart de nos phrases de test longues figurent telles quelles dans
+# l'entraînement de Soloni v0 (bam-asr-early) comme dans la partition train de
+# Jeli-ASR (celle de notre Whisper), mais pas dans celui de MMS. On écarte
+# tout énoncé dont la transcription figure dans l'un ou l'autre, quelle que
+# soit sa longueur, et l'on refait le test apparié.
+name: Soloni, phrases jamais vues
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: "Exécution de « Soloni dans la cascade »"
+        default: "38072620239"
+  push:
+    branches: [claude/chat-ia-bambara-dho8oa]
+    paths: [.github/workflows/soloni-inedites.yml]
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  RUN: ${{ inputs.run || '38072620239' }}
+
+jobs:
+  inedites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install numpy jiwer sacrebleu datasets soundfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: soloni-soloni
+          path: results
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: soloni-mms
+          path: results
+
+      - name: Phrases vues, puis comparaison sans elles
+        run: |
+          {
+            echo "## Soloni contre MMS, phrases jamais vues à l'entraînement"
+            echo
+            python -m eval.recouvrement results/asr-*.json --ids-vus vus.txt \
+              --dataset RobotsMali/bam-asr-early --split train
+            echo
+            python -m eval.recouvrement results/asr-*.json --ids-vus vus.txt \
+              --dataset RobotsMali/jeli-asr --split train
+            sort -u vus.txt -o vus.txt
+            echo
+            echo "### Sur toutes les phrases"
+            echo
+            python -m eval.significance results/asr-*.json \
+              --noms "MMS + NLLB zero-shot" "Soloni + NLLB non affiné"
+            echo
+            echo "### Sans les phrases vues à l'entraînement"
+            echo
+            python -m eval.significance results/asr-*.json --exclure vus.txt \
+              --noms "MMS + NLLB zero-shot" "Soloni + NLLB non affiné"
+          } | tee inedites.md
+          cat inedites.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soloni-inedites
+          path: |
+            inedites.md
+            vus.txt

@@ -35,8 +35,9 @@ class ASRConfig:
       - "transcribe" : audio bm -> texte bm, puis MT séparée (cascade)
       - "translate"  : audio bm -> texte fr directement (bout-en-bout)
 
-    `kind` choisit la famille de modèle : "whisper" (seq2seq, les deux tâches)
-    ou "ctc" (wav2vec2 / MMS, transcription seule — cascade uniquement).
+    `kind` choisit la famille de modèle : "whisper" (seq2seq, les deux tâches),
+    "ctc" (wav2vec2 / MMS) ou "nemo" (Soloni de RobotsMali, NeMo) ; ces deux
+    derniers en transcription seule, donc cascade uniquement.
     """
 
     model_id: str = "openai/whisper-small"
@@ -45,8 +46,11 @@ class ASRConfig:
     sample_rate: int = 16_000
     beam_size: int = 1  # 1 = greedy, suffisant et bien plus rapide sur CPU
     max_new_tokens: int = 200
-    kind: Literal["whisper", "ctc"] = "whisper"
+    kind: Literal["whisper", "ctc", "nemo"] = "whisper"
     target_lang: str | None = None  # adaptateur de langue MMS, ex. "bam"
+    # NeMo hybride (Soloni : TDT et CTC) : None garde le décodeur par défaut
+    # du modèle (TDT), "ctc" prend l'autre, plus rapide.
+    nemo_decoder: str | None = None
     # "ctranslate2" : modèle converti par scripts/export_cpu.py (int8 sur CPU,
     # cf. docs/DEPLOIEMENT.md pour les gains mesurés). Whisper uniquement.
     backend: Literal["transformers", "ctranslate2"] = "transformers"
@@ -70,6 +74,11 @@ class MTConfig:
     # de longueur). None : seul max_new_tokens borne la sortie (phase 1).
     max_length_ratio: float | None = 2.0
     max_length_margin: int = 10
+    # Sortie en boucle (« a y'a ɲininka ko a y'a ɲininka ko… ») : retraduire
+    # en interdisant de répéter un trigramme. Activé dans l'assistant
+    # (PipelineConfig), pas par défaut en évaluation, pour garder les
+    # mesures comparables à celles d'avant (eval.baselines --relance-boucles).
+    retry_loops: bool = False
 
 
 @dataclass
@@ -87,8 +96,12 @@ class LLMConfig:
     # (HF_TOKEN) : sans cela, son téléchargement échoue (401).
     model_id: str = "Qwen/Qwen2.5-1.5B-Instruct"
     gguf_path: str | None = None  # requis si backend == "llamacpp"
-    max_new_tokens: int = 96
+    max_new_tokens: int = 192
     temperature: float = 0.3
+    # Longueur des réponses, en phrases : chacune est traduite à part
+    # (PipelineConfig.translate_by_sentence), la longueur coûte surtout du
+    # temps (traduction et synthèse croissent avec elle).
+    max_sentences: int = 5
     # Couper les phrases plus longues ; None : jamais. La coupure perd la fin
     # de la phrase sans gain mesuré sur la traduction (docs/RESULTATS.md).
     max_words: int | None = None
@@ -100,7 +113,8 @@ class LLMConfig:
         "- Phrases courtes, 15 mots maximum, une idée par phrase.\n"
         "- Pas de subordonnées, pas de tournures idiomatiques, pas de jargon.\n"
         "- Vocabulaire concret et courant.\n"
-        "- 3 phrases maximum au total.\n"
+        "- Entre 2 et 5 phrases : développe quand la question le demande.\n"
+        "- Écris les nombres en chiffres.\n"
         "- Pas de listes, pas de mise en forme, pas d'emoji."
     )
 
@@ -128,23 +142,45 @@ class TemplateConfig:
 
 
 @dataclass
+class MemoireConfig:
+    """Ce que l'assistant a appris du locuteur (bambara_voice.memoire) :
+    phrases de l'atelier (`atelier`, lecture seule), corrections faites
+    pendant la démo (`path`, où elles s'écrivent), mots du lexique. Tout
+    vide : pas de mémoire."""
+
+    path: str | None = None
+    atelier: str | None = None
+    lexique: str | None = None
+    seuil: float = 0.85
+
+
+@dataclass
 class PipelineConfig:
     """Configuration complète d'une variante du système."""
 
     name: str = "cascade"
     architecture: Literal["cascade", "e2e"] = "cascade"
     asr: ASRConfig = field(default_factory=ASRConfig)
-    mt_in: MTConfig = field(default_factory=lambda: MTConfig(src_lang=BAM, tgt_lang=FRA))
-    mt_out: MTConfig = field(default_factory=lambda: MTConfig(src_lang=FRA, tgt_lang=BAM))
+    mt_in: MTConfig = field(default_factory=lambda: MTConfig(src_lang=BAM, tgt_lang=FRA,
+                                                             retry_loops=True))
+    mt_out: MTConfig = field(default_factory=lambda: MTConfig(src_lang=FRA, tgt_lang=BAM,
+                                                              retry_loops=True))
     llm: LLMConfig = field(default_factory=LLMConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
     templates: TemplateConfig = field(default_factory=TemplateConfig)
+    memoire: MemoireConfig = field(default_factory=MemoireConfig)
     device: str = os.environ.get("BV_DEVICE", "cpu")
+    # Nombres de la réponse écrits par règle, pas par NLLB (bambara_voice.nombres).
+    spell_numbers: bool = True
+    # Réponse traduite phrase par phrase : NLLB est entraîné sur des phrases
+    # isolées et omet ou déforme volontiers dans un paragraphe.
+    translate_by_sentence: bool = True
 
     def __post_init__(self) -> None:
         if self.architecture == "e2e":
-            if self.asr.kind == "ctc":
-                raise ValueError("un modèle CTC ne traduit pas : la variante e2e exige Whisper")
+            if self.asr.kind != "whisper":
+                raise ValueError(f"un modèle {self.asr.kind.upper()} ne traduit pas : "
+                                 f"la variante e2e exige Whisper")
             # En bout-en-bout, l'ASR produit déjà du français : pas de MT entrante.
             self.asr.task = "translate"
 
@@ -181,7 +217,7 @@ def split_device(device: str) -> tuple[str, int]:
 
 # Champs contenant un chemin : relatifs au fichier de configuration s'ils y
 # existent, sinon laissés tels quels (identifiant du Hub).
-_PATH_FIELDS = ("model_id", "gguf_path", "path")
+_PATH_FIELDS = ("model_id", "gguf_path", "path", "atelier", "lexique")
 
 
 def load_config(path: str | Path, architecture: str = "cascade") -> PipelineConfig:
@@ -202,7 +238,7 @@ def load_config(path: str | Path, architecture: str = "cascade") -> PipelineConf
     data = json.loads(path.read_text(encoding="utf-8"))
     base_dir = path.resolve().parent
     defaults = PipelineConfig()
-    sections = ("asr", "mt_in", "mt_out", "llm", "tts", "templates")
+    sections = ("asr", "mt_in", "mt_out", "llm", "tts", "templates", "memoire")
 
     unknown = set(data) - set(sections) - {"device", "_comment"}
     if unknown:

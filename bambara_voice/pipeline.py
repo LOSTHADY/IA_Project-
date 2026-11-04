@@ -26,8 +26,11 @@ import numpy as np
 
 from .asr import SpeechRecognizer, load_audio
 from .config import PipelineConfig
-from .llm import ChatModel
+from .llm import ChatModel, split_sentences
+from .memoire import Memoire, Souvenir
 from .mt import Translator
+from .nombres import en_bambara, en_chiffres
+from .normalize import strip_tags
 from .templates import TemplateBank
 from .tts import SpeechSynthesizer, SpeechResult
 
@@ -42,9 +45,11 @@ class TurnTrace:
     asr_text: str = ""            # bambara (cascade) ou français (e2e)
     source_bm: str = ""           # texte bambara si disponible
     source_fr: str = ""           # entrée du LLM
+    compris_par: str = "mt"       # « mt », ou « memoire » : un souvenir (bambara_voice.memoire)
+    memoire_score: float | None = None
     reply_fr: str = ""            # sortie du LLM, après simplification
     reply_bm: str = ""            # réponse finale en bambara
-    reply_source: str = "mt"      # "template" ou "mt"
+    reply_source: str = "mt"      # "template", "mt" ou "pas_compris"
     template_id: str | None = None
     template_score: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
@@ -64,6 +69,9 @@ class TurnTrace:
         d["total_seconds"] = round(self.total_seconds, 3)
         d["rtf"] = round(self.rtf, 3)
         return d
+
+
+PAS_COMPRIS_FR = "Je n'ai pas bien entendu. Peux-tu répéter ?"
 
 
 class _Timer:
@@ -93,6 +101,8 @@ class VoicePipeline:
         self.llm = ChatModel(config.llm, dev)
         self.tts = SpeechSynthesizer(config.tts, dev)
         self.templates = TemplateBank.from_config(config.templates)
+        m = config.memoire
+        self.memoire = Memoire(m.path, m.seuil, m.atelier, m.lexique)
 
     # --- étapes ------------------------------------------------------------
 
@@ -105,18 +115,44 @@ class VoicePipeline:
         with _Timer(trace.timings, "asr"):
             res = self.asr.transcribe(audio)
         trace.asr_text = res.text
+        # Sortie brute gardée dans asr_text ; la suite ne voit que la parole.
+        text = strip_tags(res.text)
 
         if res.language == "fr":
-            trace.source_fr = res.text
-            return res.text
+            trace.source_fr = text
+            return text
 
-        trace.source_bm = res.text
+        trace.source_bm = text
+        if not text:  # rien d'autre qu'une annotation : rien à traduire
+            trace.source_fr = ""
+            return ""
+        # Une phrase déjà apprise (atelier, correction) : son sens est connu.
+        souvenir = self.memoire.chercher(text)
+        if souvenir is not None:
+            trace.source_fr, trace.compris_par = souvenir[0].fr, "memoire"
+            trace.memoire_score = round(souvenir[1], 3)
+            return trace.source_fr
         with _Timer(trace.timings, "mt_in"):
-            trace.source_fr = self.mt_in.translate(res.text)
+            trace.source_fr = self.mt_in.translate(self.memoire.remplacer_mots(text))
         return trace.source_fr
 
+    def apprendre(self, trace: TurnTrace, fr: str) -> Souvenir:
+        """Ce que le locuteur voulait dire par ce tour : retenu pour la suite."""
+        if not trace.source_bm.strip():
+            raise ValueError("rien n'a été entendu : rien à retenir")
+        return self.memoire.apprendre(trace.source_bm, fr, "correction")
+
     def respond(self, trace: TurnTrace, history: list[dict] | None = None) -> str:
-        """Texte français -> réponse bambara, gabarit d'abord puis repli MT."""
+        """Texte français -> réponse bambara, gabarit d'abord puis repli MT.
+        Rien entendu (aucune parole, ou une annotation seule comme « <tag> ») :
+        on demande de répéter, sans passer par le LLM."""
+        if not trace.source_bm.strip() and not trace.source_fr.strip():
+            trace.reply_source = "pas_compris"
+            trace.reply_fr = PAS_COMPRIS_FR
+            with _Timer(trace.timings, "mt_out"):
+                trace.reply_bm = self._translate_reply(PAS_COMPRIS_FR)
+            return trace.reply_bm
+
         # Un gabarit ne peut être testé que si l'on dispose du texte bambara,
         # donc jamais en e2e — limite à documenter dans le mémoire.
         if trace.source_bm:
@@ -132,9 +168,18 @@ class VoicePipeline:
         with _Timer(trace.timings, "llm"):
             trace.reply_fr = self.llm.reply(trace.source_fr, history)
         with _Timer(trace.timings, "mt_out"):
-            trace.reply_bm = self.mt_out.translate(trace.reply_fr)
+            trace.reply_bm = self._translate_reply(trace.reply_fr)
         trace.reply_source = "mt"
         return trace.reply_bm
+
+    def _translate_reply(self, text_fr: str) -> str:
+        """Français -> bambara : nombres par règle, une phrase à la fois."""
+        cfg = self.config
+        if cfg.spell_numbers:
+            text_fr = en_chiffres(text_fr)  # NLLB recopie les chiffres
+        pieces = split_sentences(text_fr) if cfg.translate_by_sentence else [text_fr]
+        text_bm = " ".join(t for t in (self.mt_out.translate(p) for p in pieces) if t)
+        return en_bambara(text_bm) if cfg.spell_numbers else text_bm
 
     def speak(self, trace: TurnTrace) -> SpeechResult:
         with _Timer(trace.timings, "tts"):

@@ -181,3 +181,142 @@ def test_ctc_charge_l_adaptateur_mms(monkeypatch, tmp_path):
     assert seen["processor"] == {"target_lang": "bam"}
     assert seen["model"]["target_lang"] == "bam"
     assert seen["model"]["ignore_mismatched_sizes"] is True
+
+
+# --- NeMo (Soloni) ------------------------------------------------------------
+
+class _Hypothesis:
+    def __init__(self, text):
+        self.text = text
+
+
+def _fake_nemo(monkeypatch, output, tdt=True):
+    """Un faux paquet nemo : NeMo est trop lourd pour les tests. Seule sa
+    dépendance omegaconf, légère, est requise. `tdt` : modèle à décodeur
+    transducteur (Soloni) ; sinon CTC seul (Soloba)."""
+    import types
+
+    pytest.importorskip("omegaconf")
+
+    import soundfile as sf
+
+    calls: dict = {}
+
+    from omegaconf import OmegaConf
+
+    class FakeModel:
+        def __init__(self):
+            if tdt:
+                self.joint = object()
+
+        def eval(self):
+            calls["eval"] = True
+            return self
+
+        cfg = types.SimpleNamespace(aux_ctc=types.SimpleNamespace(decoding="ctc-cfg"),
+                                    decoding=OmegaConf.create({"greedy": {}}))
+
+        def change_decoding_strategy(self, decoding_cfg=None, decoder_type=None):
+            calls["decoder"] = (decoder_type, decoding_cfg)
+
+        def transcribe(self, audio, batch_size=1, verbose=True):
+            data, sr = sf.read(audio[0])  # le fichier existe pendant l'appel
+            calls["audio"] = (len(data), sr, verbose)
+            return output
+
+    class ASRModel:
+        @staticmethod
+        def from_pretrained(model_name, map_location=None, return_config=False,
+                            override_config_path=None, strict=True):
+            if return_config:
+                from omegaconf import OmegaConf
+                tree = {} if calls.get("ancien") else {"key_phrase_items_list": None}
+                return OmegaConf.create({"decoding": {"greedy": {"boosting_tree": tree},
+                                                      "beam": {"boosting_tree": dict(tree)}}})
+            if override_config_path:
+                calls["patched"] = (open(override_config_path).read(), strict)
+            calls["loaded"] = (model_name, str(map_location))
+            return FakeModel()
+
+    names = ["nemo", "nemo.collections", "nemo.collections.asr", "nemo.collections.asr.models"]
+    for name in names:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    sys.modules["nemo.collections.asr.models"].ASRModel = ASRModel
+    return calls
+
+
+def test_nemo_transcrit_depuis_un_fichier_temporaire(monkeypatch):
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("  a bɛ  yen ")])
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloni", kind="nemo", language=None))
+    res = rec.transcribe(AUDIO)
+    assert res.text == "a bɛ yen" and res.language == "bm"
+    assert calls["loaded"] == ("RobotsMali/soloni", "cpu") and calls["eval"]
+    assert calls["audio"] == (16_000, 16_000, False)
+    assert "decoder" not in calls  # décodeur par défaut (TDT)
+    assert "patched" not in calls  # configuration à jour : chargement normal
+
+
+def test_nemo_anciennes_sorties_et_decodeur_ctc(monkeypatch):
+    # Anciennes versions de NeMo, modèles hybrides : (meilleures, toutes), en texte.
+    calls = _fake_nemo(monkeypatch, (["i ni ce"], [["i ni ce"]]))
+    rec = SpeechRecognizer(ASRConfig(kind="nemo", nemo_decoder="ctc"))
+    assert rec.transcribe(AUDIO).text == "i ni ce"
+    assert calls["decoder"] == ("ctc", "ctc-cfg")
+
+
+def test_nemo_charge_un_modele_enregistre_avec_un_ancien_nemo(monkeypatch):
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")])
+    calls["ancien"] = True
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloni", kind="nemo"))
+    assert rec.transcribe(AUDIO).text == "a bɛ yen"
+    config, strict = calls["patched"]
+    assert config.count("key_phrase_items_list: null") == 2 and strict is False
+
+
+def test_nemo_refuse_la_traduction(monkeypatch):
+    _fake_nemo(monkeypatch, [_Hypothesis("x")])
+    rec = SpeechRecognizer(ASRConfig(kind="nemo", task="translate"))
+    with pytest.raises(ValueError, match="NeMo"):
+        rec.transcribe(AUDIO)
+    with pytest.raises(ValueError, match="NEMO"):
+        e2e_config(asr=ASRConfig(kind="nemo"))
+
+
+
+def test_nemo_deux_propositions_une_par_decodeur(monkeypatch):
+    """Soloni (TDT et CTC) : deux propositions, celle du décodeur habituel
+    d'abord ; on revient ensuite au décodeur habituel."""
+    calls = _fake_nemo(monkeypatch, None)
+    sorties = {None: "i ni sɔgɔma", "rnnt": "i ni sɔgɔma", "ctc": "i ni sɔgɔma i ka kɛnɛ"}
+    etat = {"decodeur": None}
+    import sys as _sys
+    modele = _sys.modules["nemo.collections.asr.models"].ASRModel.from_pretrained("x")
+    Fake = type(modele)
+    Fake.change_decoding_strategy = lambda self, decoding_cfg=None, decoder_type=None: (
+        etat.update(decodeur=decoder_type), calls.setdefault("changements", []).append(decoder_type))
+    Fake.transcribe = lambda self, audio, batch_size=1, verbose=True: [_Hypothesis(
+        sorties[etat["decodeur"]])]
+    rec = SpeechRecognizer(ASRConfig(kind="nemo"))
+    assert rec.alternatives(AUDIO) == ["i ni sɔgɔma", "i ni sɔgɔma i ka kɛnɛ"]
+    assert calls["changements"] == ["ctc", "rnnt"]
+    # Les deux décodeurs d'accord : une seule proposition.
+    sorties["ctc"] = "i ni sɔgɔma"
+    assert rec.alternatives(AUDIO) == ["i ni sɔgɔma"]
+    # Soloba (CTC seul) : une seule, sans changer de décodeur.
+    calls2 = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")], tdt=False)
+    assert SpeechRecognizer(ASRConfig(kind="nemo")).alternatives(AUDIO) == ["a bɛ yen"]
+    assert "decoder" not in calls2
+
+
+@pytest.mark.parametrize("tdt", [True, False])
+def test_nemo_sur_gpu_graphes_cuda_coupes_seulement_pour_le_tdt(monkeypatch, tdt):
+    """Soloni (TDT) : graphes CUDA du décodeur coupés. Soloba (CTC seul) :
+    rien à couper, et NeMo refuserait la clé dans sa configuration CTC."""
+    calls = _fake_nemo(monkeypatch, [_Hypothesis("a bɛ yen")], tdt=tdt)
+    rec = SpeechRecognizer(ASRConfig(model_id="RobotsMali/soloba", kind="nemo"), device="cuda")
+    rec._load_nemo()
+    if tdt:
+        decoder_type, cfg = calls["decoder"]
+        assert decoder_type is None and cfg.greedy.use_cuda_graph_decoder is False
+    else:
+        assert "decoder" not in calls

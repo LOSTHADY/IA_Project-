@@ -89,6 +89,18 @@ def fold(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+# Annotations de transcription que certains modèles recopient : « <tag> »
+# (Soloni de RobotsMali, sur des énoncés courts ou peu clairs), « [musique] ».
+_TAG_RE = re.compile(r"<[^<>\s]{1,24}>|\[[^\[\]]{1,24}\]")
+
+
+def strip_tags(text: str) -> str:
+    """Retire les annotations entre chevrons ou crochets d'une transcription :
+    elles ne sont pas de la parole, et le traducteur les prendrait pour des
+    mots (« <tag> » devenait « Tag »)."""
+    return _WS_RE.sub(" ", _TAG_RE.sub(" ", text)).strip()
+
+
 def strip_punctuation(text: str) -> str:
     """Retire la ponctuation mais garde lettres, diacritiques et apostrophes.
 
@@ -113,3 +125,27 @@ def orthography_ratio(lines: list[str]) -> float:
     if not lines:
         return 0.0
     return sum(has_official_orthography(l) for l in lines) / len(lines)
+
+
+# --- boucles de génération ----------------------------------------------------
+
+REPEAT_NGRAM, REPEAT_MIN = 3, 3
+# Motif de 2 à 12 caractères répété au moins quatre fois d'affilée : une
+# boucle à l'intérieur d'un « mot » (« sɔgɔsɔgɔsɔgɔsɔgɔ… »). Le redoublement
+# légitime du bambara (munumunu, sɔgɔsɔgɔ) ne répète que deux fois.
+_CHAR_LOOP_RE = re.compile(r"(.{2,12}?)\1{3,}")
+
+
+def has_loop(text: str, n: int = REPEAT_NGRAM, times: int = REPEAT_MIN) -> bool:
+    """Vrai si un texte généré porte la signature d'une boucle : un même
+    n-gramme de mots qui revient au moins `times` fois (« a bɛ a bɛ a
+    bɛ… »), ou un motif de caractères répété d'affilée sans espace
+    (« sɔgɔsɔgɔsɔgɔsɔgɔ… »)."""
+    from collections import Counter
+
+    words = text.split()
+    grams = Counter(tuple(words[i:i + n]) for i in range(len(words) - n + 1))
+    if grams and grams.most_common(1)[0][1] >= times:
+        return True
+    return bool(_CHAR_LOOP_RE.search(text))
+

@@ -38,7 +38,8 @@ SAMPLE_RATE = 16_000
 
 REGISTERS = ("spontane", "lu")
 STATUSES = ("a_transcrire", "transcrit", "valide")
-CONDITIONS = ("salle calme", "intérieur bruyant", "extérieur", "téléphone")
+CONDITIONS = ("salle calme", "intérieur bruyant", "extérieur", "téléphone",
+              "rue ou marché", "véhicule")
 
 # Cibles de composition. Les seuils au-delà du nombre d'items et de locuteurs
 # sont indicatifs : ils signalent un déséquilibre, ils ne le définissent pas.
@@ -67,6 +68,7 @@ class Speaker:
     consent_date: str = ""
     public_release: bool = False   # accepte la diffusion publique de sa voix
     notes: str = ""
+    telephone: str = ""            # marque et modèle : la campagne de lecture en varie
 
 
 @dataclass

@@ -14,7 +14,7 @@ import logging
 import math
 
 from .config import MTConfig, split_device
-from .normalize import normalize
+from .normalize import has_loop, normalize
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ class Translator:
         # La dernière traduction s'est-elle arrêtée sur la longueur maximale
         # plutôt que sur une fin de phrase ? Presque toujours une boucle.
         self.last_capped = False
+        # A-t-elle été refaite parce qu'elle bouclait (retry_loops) ?
+        self.last_retried = False
 
     def max_tokens(self, n_source: int) -> int:
         """Longueur maximale de la traduction, en jetons, token de langue
@@ -95,20 +97,26 @@ class Translator:
         return tid
 
     def translate(self, text: str) -> str:
-        import torch
-
-        self.last_capped = False
+        self.last_capped = self.last_retried = False
         text = text.strip()
         if not text:
             return ""
 
         self._ensure_loaded()
-        cfg = self.config
         # Le tokenizer NLLB doit connaître la langue source avant l'encodage.
-        self._tokenizer.src_lang = cfg.src_lang
-        if cfg.backend == "ctranslate2":
-            return self._finish(self._translate_ct2(text))
+        self._tokenizer.src_lang = self.config.src_lang
+        out = self._generate(text)
+        if self.config.retry_loops and has_loop(out):
+            self.last_retried = True
+            out = self._generate(text, no_repeat_ngram_size=3)
+        return self._finish(out)
 
+    def _generate(self, text: str, no_repeat_ngram_size: int = 0) -> str:
+        if self.config.backend == "ctranslate2":
+            return self._translate_ct2(text, no_repeat_ngram_size)
+        import torch
+
+        cfg = self.config
         inputs = self._tokenizer(
             text, return_tensors="pt", truncation=True, max_length=512
         ).to(self.device)
@@ -118,6 +126,8 @@ class Translator:
             "max_new_tokens": budget,
             "num_beams": cfg.beam_size,
         }
+        if no_repeat_ngram_size:
+            gen_kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
         bos = self._target_token_id()
         if bos is not None:
             gen_kwargs["forced_bos_token_id"] = bos
@@ -127,16 +137,16 @@ class Translator:
         # Une séquence commence par le token de début du décodeur.
         self.last_capped = (ids.shape[1] - 1 >= budget
                             and ids[0, -1].item() != self._tokenizer.eos_token_id)
-        return self._finish(self._tokenizer.batch_decode(ids, skip_special_tokens=True)[0])
+        return self._tokenizer.batch_decode(ids, skip_special_tokens=True)[0]
 
-    def _translate_ct2(self, text: str) -> str:
+    def _translate_ct2(self, text: str, no_repeat_ngram_size: int = 0) -> str:
         tok, cfg = self._tokenizer, self.config
         source = tok.convert_ids_to_tokens(tok.encode(text, truncation=True, max_length=512))
         budget = self.max_tokens(len(source))
         # Le préfixe cible joue le rôle de forced_bos_token_id.
         res = self._model.translate_batch(
             [source], target_prefix=[[cfg.tgt_lang]], beam_size=cfg.beam_size,
-            max_decoding_length=budget,
+            max_decoding_length=budget, no_repeat_ngram_size=no_repeat_ngram_size,
         )
         # Les hypothèses comptent le préfixe mais pas la fin de phrase : une
         # hypothèse qui remplit le budget a été coupée.

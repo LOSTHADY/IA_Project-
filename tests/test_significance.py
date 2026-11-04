@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from eval import mos, significance  # noqa: E402
 from eval.metrics import score_asr, score_mt  # noqa: E402
 from eval.significance import (  # noqa: E402
-    Series, bootstrap, chrf_stats, corpus_score, load_series, wer_stats,
+    Series, bootstrap, chrf_stats, corpus_score, load_series, to_markdown, wer_stats,
 )
 
 HYPS = ["i ni ce, n be taa.", "a bɛ yen", "", "sugu ka jan"]
@@ -131,6 +131,24 @@ def test_tirage_par_locuteur_exige_des_locuteurs_coherents():
         bootstrap([voices], n_boot=10, unit="phrase")
 
 
+def test_un_seul_locuteur_tire_les_enonces():
+    """Jeu maison d'un seul contributeur : tirer « les locuteurs » reprendrait
+    toujours le même, avec un IC nul et un écart toujours « établi »."""
+    voices = _voices(n_speakers=1, per_speaker=40)
+    rng = np.random.default_rng(0)
+    noisy = Series("WER strict", "wer", voices.ids,
+                   np.column_stack([rng.integers(0, 6, 40), np.full(40, 10)]).astype(float),
+                   voices.speakers)
+    res = bootstrap([voices, noisy], n_boot=300)
+    assert res["unite"] == "enonce" and res["locuteurs_seulement"] == 1
+    assert res["n_unites"] == 40
+    assert _width(res["systemes"][1]) > 0
+    with pytest.raises(ValueError, match="un seul locuteur"):
+        bootstrap([voices], n_boot=10, unit="locuteur")
+    md = to_markdown(["a", "b"], {"WER strict": res})
+    assert "**Un seul locuteur**" in md and "en tirant les énoncés" in md
+
+
 # --- lecture des rapports -----------------------------------------------------
 
 def _report(path: Path, report: dict, rows: list[dict]) -> Path:
@@ -196,17 +214,34 @@ def test_cli_compare_cascade_et_bout_en_bout(tmp_path, capsys):
         significance.main([str(tmp_path / "c.json"), "--noms", "inconnu"])
 
 
+def test_cli_ecarte_les_enonces_deja_vus(tmp_path, capsys):
+    rapport = _report(tmp_path / "c.json", {"nom": "cascade", "architecture": "cascade",
+                                            "maillon": "asr"}, _asr_rows(e2e=False))
+    vus = tmp_path / "vus.txt"
+    vus.write_text("0\n1\n\n", encoding="utf-8")
+    significance.main([str(rapport), "--exclure", str(vus), "--n-boot", "10"])
+    out = capsys.readouterr().out
+    assert out.startswith("2 énoncés écartés")
+    assert f"| WER strict | {len(REFS) - 2} |" in out
+    assert load_series(rapport, {"0"})[1]["WER strict"].ids[0] == "1"
+
+
 def test_cli_jeu_maison_tire_les_locuteurs(tmp_path, capsys):
     rows = [{"item": f"bv-{i}", "source_bm": h, "source_fr": f, "ref_transcript_bm": r,
              "ref_translation_fr": fr, "speaker": f"spk-0{i % 3}"}
             for i, (h, r, f, fr) in enumerate(zip(HYPS, REFS, FR_H, FR_R))]
     path = _report(tmp_path / "cascade.json", {"architecture": "cascade"}, rows)
     assert load_series(path)[1]["WER strict"].speakers[:2] == ["spk-00", "spk-01"]
+    # Trois voix : trop peu de grappes, « auto » tire les énoncés et le dit.
     significance.main([str(path), "--n-boot", "50"])
+    out = capsys.readouterr().out
+    assert "en tirant les énoncés" in out and "**3 locuteurs seulement**" in out
+    significance.main([str(path), "--n-boot", "50", "--unite", "locuteur"])
     out = capsys.readouterr().out
     assert "en tirant les locuteurs (3)" in out and "Moins de 8 locuteurs" in out
     significance.main([str(path), "--n-boot", "50", "--unite", "enonce"])
-    assert "en tirant les énoncés" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "en tirant les énoncés" in out and "seulement" not in out
 
 
 # --- MOS ----------------------------------------------------------------------

@@ -57,3 +57,34 @@ def test_reponse_avec_un_vrai_petit_lm(lms, chat_template, temperature):
     generated = llm._model.out.shape[-1] - kw["input_ids"].shape[-1]
     assert 0 < generated <= 6
     assert kw["do_sample"] is (temperature > 0)
+
+
+def test_backend_llamacpp(monkeypatch, tmp_path):
+    """Le LLM allégé du CPU (GGUF via llama.cpp) : chargé depuis gguf_path,
+    même consigne et même post-traitement que le backend transformers."""
+    import sys
+    import types
+
+    vus = {}
+
+    class Llama:
+        def __init__(self, model_path, n_ctx, verbose):
+            vus["chemin"] = model_path
+
+        def create_chat_completion(self, messages, max_tokens, temperature):
+            vus["messages"], vus["max_tokens"] = messages, max_tokens
+            return {"choices": [{"message": {"content": " Bonjour. Je vais bien. "}}]}
+
+    module = types.ModuleType("llama_cpp")
+    module.Llama = Llama
+    monkeypatch.setitem(sys.modules, "llama_cpp", module)
+    from bambara_voice.config import LLMConfig
+    from bambara_voice.llm import ChatModel
+
+    gguf = tmp_path / "qwen.gguf"
+    llm = ChatModel(LLMConfig(backend="llamacpp", gguf_path=str(gguf), max_new_tokens=64))
+    assert llm.reply("Comment vas-tu ?") == "Bonjour. Je vais bien."
+    assert vus["chemin"] == str(gguf) and vus["max_tokens"] == 64
+    assert vus["messages"][-1] == {"role": "user", "content": "Comment vas-tu ?"}
+    with pytest.raises(ValueError, match="gguf_path"):
+        ChatModel(LLMConfig(backend="llamacpp")).reply("x")

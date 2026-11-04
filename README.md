@@ -88,6 +88,20 @@ L'application suit une séance dans l'ordre :
 
 Protocole et formulaire de consentement : [`docs/COLLECTE.md`](docs/COLLECTE.md).
 
+### Atelier de données : sans écrire le bambara
+
+```bash
+python app/atelier_app.py --share          # ou notebooks/atelier_collecte.ipynb sur Colab
+```
+
+Pour les contributeurs qui parlent le bambara sans l'écrire : **dire** en
+bambara 300 phrases françaises (12 rubriques), à un ami, à un inconnu ou à
+une personne âgée, en autant de versions qu'on veut, **lire** des phrases bambara
+écrites, **juger** à l'aveugle deux traductions, noter l'**argot**. Le jeu
+« dit » se passe de transcription : il mesure la compréhension depuis
+l'audio, la comparaison centrale, sur de la parole réelle. Mode d'emploi :
+[`docs/ATELIER.md`](docs/ATELIER.md).
+
 ## Références zero-shot (phase 1)
 
 [![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase1_zero_shot.ipynb)
@@ -105,8 +119,15 @@ dépôt public. Il faut compter quelques heures. Le tableau et les
 intervalles de confiance s'affichent dans le résumé de l'exécution ; les
 rapports et les audios à noter sont dans les artefacts.
 
+Troisième modèle de reconnaissance pour la cascade : Soloni, de RobotsMali
+(Parakeet de NVIDIA affiné sur le bambara, 114 millions de paramètres). Le
+workflow [« Soloni dans la cascade »](.github/workflows/soloni.yml) le mesure
+sur les mêmes énoncés que MMS, sur les processeurs de GitHub. Il demande
+NeMo : `pip install "nemo_toolkit[asr]"`.
+
 ```bash
 python -m eval.baselines asr --model facebook/mms-1b-all --kind ctc --target-lang bam --with-mt
+python -m eval.baselines asr --model RobotsMali/soloni-114m-tdt-ctc-v3 --kind nemo --with-mt
 python -m eval.baselines mt --dataset RobotsMaliAI/bayelemabaga
 python -m eval.compare eval/results/zero-shot-*.json
 ```
@@ -145,9 +166,53 @@ paraît bien pire qu'il n'est.
 [![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase3_finetuning.ipynb)
 
 Le notebook [`notebooks/phase3_finetuning.ipynb`](notebooks/phase3_finetuning.ipynb)
-entraîne les modèles, puis compare cascade et bout-en-bout avec le protocole
-de la phase 1. Les checkpoints vont sur Drive, et `--resume` reprend après
-une coupure de session.
+entraîne les modèles, compare cascade et bout-en-bout avec le protocole de
+la phase 1, puis fait tourner l'assistant affiné, jusqu'à une démo au micro.
+Un essai rapide mesure d'abord la vitesse du GPU et annonce la durée de
+l'entraînement complet. Les checkpoints vont sur Drive, et `--resume`
+reprend après une coupure de session.
+
+[`notebooks/v4_test.ipynb`](notebooks/v4_test.ipynb) ne fait que le quatrième
+tour (§9d : un professeur ouvert traduit du bambara parlé, la v4 apprend),
+avec le stockage sur un second compte Google qui accède par un raccourci au
+dossier `bambara` du premier.
+
+[`notebooks/progres.ipynb`](notebooks/progres.ipynb) mesure la reconnaissance
+sur les lectures de l'atelier (texte exact, d'où le WER), entraîne le
+traducteur sur les phrases dites dans l'atelier (version « maison-N »,
+jugée sur la moitié test, jamais apprise), et recueille le jugement du
+locuteur sur ce qui a été compris (`eval/comprehension.py`).
+[`notebooks/diagnostic.ipynb`](notebooks/diagnostic.ipynb) n'en garde que les
+mesures, sans GPU : erreurs de la reconnaissance sur les lectures, consensus
+des traducteurs déjà entraînés (`eval/consensus.py`), et jugement du locuteur
+(sens compris ? bien entendu ?), qui dit si les erreurs viennent de la
+reconnaissance ou de la traduction.
+
+[`notebooks/voix.ipynb`](notebooks/voix.ipynb) travaille l'étage de la voix
+seul : Soloni affiné sur les enregistrements au texte exact de l'atelier
+(lectures, tours corrigés du mode Discuter ; `scripts/affiner_soloni.py`,
+d'après la recette de RobotsMali), mis en service seulement s'il fait moins
+d'erreurs sur des lectures jamais entendues et comprend mieux les phrases du
+jeu maison.
+
+Pour un gain qui se voit, il faut des dizaines d'heures lues par des dizaines
+de voix : la **campagne de lecture** ([`docs/CAMPAGNE.md`](docs/CAMPAGNE.md)).
+`scripts/campagne.py` prépare la liste (30 000 phrases d'AfVoices et de
+Bayelemabaga) et suit les paliers (20, 100, 300 h). Un lecteur sur huit est
+réservé au test des **voix nouvelles**, jamais apprises, et le notebook `voix`
+trace dès le pilote la courbe d'apprentissage (`eval/courbe.py`) : ce que
+rapporte chaque doublement des heures.
+
+L'assistant a aussi une **mémoire** (`bambara_voice/memoire.py`) : quand il
+comprend mal, le locuteur écrit dans la démo ce qu'il voulait dire et clique
+« Retiens-le » ; la phrase est comprise la fois suivante, sans
+réentraînement. Les phrases de l'atelier y entrent aussi, si elles ont fait
+leurs preuves (`eval/redire.py` : une phrase apprise est-elle comprise la
+fois suivante ?).
+
+Si le bouton ne s'ouvre pas (le nom de branche contient des « / »), passer
+par Colab : *Fichier → Ouvrir un notebook → GitHub*, ou télécharger le
+fichier `.ipynb` depuis GitHub puis *Fichier → Importer un notebook*.
 
 ```bash
 # Whisper multi-tâche : transcription bambara + traduction française
@@ -190,7 +255,8 @@ ordres de grandeur : [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md).
 bambara_voice/     pipeline d'inférence
   config.py        identifiants de modèles et fichier de déploiement (--config)
   normalize.py     normalisation et repli orthographique du bambara
-  asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC)
+  asr.py           Whisper (transcription bm ou traduction directe fr), MMS (CTC),
+                   Soloni (NeMo)
   mt.py            NLLB bambara <-> français
   llm.py           modèle de dialogue + contrainte de style traduisible
   tts.py           synthèse vocale bambara
@@ -198,12 +264,15 @@ bambara_voice/     pipeline d'inférence
   pipeline.py      orchestration + trace chronométrée de chaque tour
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
-app/               démo Gradio, application de collecte
-notebooks/         notebooks Colab (phases 1 et 3-4)
+app/               démo Gradio, application de collecte, atelier de données
+notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb, progrès : progres.ipynb, diagnostic CPU : diagnostic.ipynb, voix : voix.ipynb)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement
+docs/ATELIER.md    atelier de données : dire, lire, juger, lexique
+docs/CAMPAGNE.md   campagne de lecture : paliers, lecteurs, voix nouvelles, courbe
 docs/DEPLOIEMENT.md  déploiement CPU : conversion int8, GGUF, mesures
 docs/RESULTATS.md  chiffres mesurés, phase par phase
+docs/RECHERCHE.md  ressources, modèles et techniques pour la suite (dictionnaires, corpus, plan)
 data/templates.json  banque de gabarits (à remplir)
 data/testset/      jeu de test (à collecter — chemin critique), consignes
 ```
@@ -214,9 +283,9 @@ data/testset/      jeu de test (à collecter — chemin critique), consignes
 |---|---|---|
 | 0 | Squelette, harnais d'évaluation, normalisation | fait |
 | 1 | Références zero-shot | **fait** — [`docs/RESULTATS.md`](docs/RESULTATS.md) |
-| 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, collecte à faire — chemin critique |
-| 3 | Fine-tuning Whisper + NLLB | scripts testés de bout en bout sur petits modèles, notebook prêt |
-| 4 | Comparaison des deux architectures | prête sur Jeli-ASR ; sur le jeu maison après la phase 2 |
+| 2 | **Jeu de test, 200–500 énoncés** | outillage prêt, dont l'[atelier de données](docs/ATELIER.md) ; collecte à faire — chemin critique |
+| 3 | Fine-tuning Whisper + NLLB | **fait** : NLLB affiné, chrF++ 21,8 → 27,8 (bm→fr) et 25,7 → 29,9 (fr→bm) ; second tour (NLLB v2) prêt |
+| 4 | Comparaison des deux architectures | **faite sur Jeli-ASR** : cascade Soloni + NLLB affiné 23,7 contre bout-en-bout 20,9 (+2,7 [0,9 ; 4,7]) ; sur le jeu maison après la phase 2 |
 | 5 | Assemblage CPU, quantisation, démo | chaîne complète validée avec les vrais modèles (zero-shot, 33 s par tour en fp32) ; int8 à mesurer sur la machine cible |
 
 La phase 2 conditionne tout : sans jeu de test, aucun chiffre n'est
@@ -232,7 +301,9 @@ for f in tests/test_*.py; do python -m pytest "$f" -q; done
 Un processus par module : lancée d'un bloc (`pytest tests/`), la suite
 plante par intermittence sur une corruption du tas native, toujours pendant
 l'utilisation de CTranslate2, et jamais module par module. La cause n'est
-pas identifiée. Les tests sont lancés automatiquement à chaque push par
+pas identifiée. Le même défaut fait parfois planter Python à sa sortie,
+tests passés : `tests/conftest.py` sort alors directement avec le vrai
+résultat. Les tests sont lancés automatiquement à chaque push par
 GitHub Actions ([`tests.yml`](.github/workflows/tests.yml)).
 
 Couvrent la logique déterministe (normalisation, gabarits, simplification,

@@ -2,13 +2,15 @@
 comme ceux du Hub (colonne audio {bytes, path}, ou translation {bam, fr})."""
 
 import io
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 datasets = pytest.importorskip("datasets")
 sf = pytest.importorskip("soundfile")
@@ -189,3 +191,69 @@ def test_echantillon_reproductible():
     assert a == sample_indices(1000, 10, seed=3) and a == sorted(a) and len(set(a)) == 10
     assert a != list(range(10))  # pas les 10 premières lignes
     assert sample_indices(5, 10) == [0, 1, 2, 3, 4]
+
+
+# --- données de la V3 (scripts/donnees_v3.py) et jeux locaux ------------------------
+
+def _sources_v3(d: Path) -> Path:
+    """Copies minuscules des vrais formats : Toolbox du Bamadaba, TSV de
+    GATITOS, JSON Lines de MAFAND."""
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "bamadaba.txt").write_text(
+        "\\lx dàba\n\\xv dàba d'á mà !\n\\xf donne-lui la houe !\n"
+        "\\xv à tá tɛ́\n\\xf ce n'est pas le sien ..., la sienne ... (ce n'est pas sa propriété)\n"
+        "\\xv kà táa kà mɔ̀gɔ bólo dàn\n\\xf dépasser la compétence de qqn., sortir ; déborder\n"
+        "\\xv à y'à fɔ́ ...\n\\xf il l'a dit ...\n"
+        "\\xv í ní sɔ̀gɔma\n\\xf bonjour, comment vas-tu ce matin ?\n", encoding="utf-8")
+    (d / "en_bm.tsv").write_text("good morning\ta' ni sɔgɔma\nmarket\tsugu\nonly\tdɔrɔn\n",
+                                 encoding="utf-8")
+    (d / "en_fr.tsv").write_text("good morning\tbonjour\nmarket\tmarché\n", encoding="utf-8")
+    rows = {"train": [("O ye kɛ.", "Cela a été fait."), ("A bɛ yen.", "Il est là."),
+                      ("A bɛ yen.", "Il est là.")],
+            "dev": [("Dev bɛ.", "Développement.")], "test": [("A bɛ yen.", "Test.")]}
+    for split, pairs in rows.items():
+        (d / f"mafand-{split}.json").write_text("\n".join(
+            json.dumps({"translation": {"fr": fr, "bam": bm}}, ensure_ascii=False)
+            for bm, fr in pairs), encoding="utf-8")
+    return d
+
+
+def test_donnees_v3_nettoie_et_tient_les_tests_a_l_ecart(tmp_path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import donnees_v3
+
+    assert donnees_v3.sans_tons("à tá tɛ́ mɔ̀gɔ") == "a ta tɛ mɔgɔ"
+    stats = donnees_v3.preparer(tmp_path / "out", _sources_v3(tmp_path / "src"),
+                                ROOT / "data" / "atelier" / "a_dire.json")
+    lire = lambda p: [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
+    bamadaba = lire(tmp_path / "out" / "bamadaba" / "train.jsonl")
+    assert [(p["bm"], p["fr"]) for p in bamadaba] == [
+        ("daba d'a ma !", "donne-lui la houe !"),
+        ("a ta tɛ", "ce n'est pas le sien, la sienne"),
+        ("ka taa ka mɔgɔ bolo dan", "dépasser la compétence de quelqu'un, sortir"),
+    ]  # l'exemple inachevé est écarté ; la phrase du jeu maison aussi
+    assert stats["bamadaba"] == {"gardees": 3, "ecartees": 1}
+    gatitos = lire(tmp_path / "out" / "gatitos" / "train.jsonl")
+    assert [(p["bm"], p["fr"]) for p in gatitos] == [("a' ni sɔgɔma", "bonjour"),
+                                                      ("sugu", "marché")]
+    # MAFAND : test et validation intacts, et rien d'eux dans l'entraînement.
+    mafand = tmp_path / "out" / "mafand"
+    assert [p["bm"] for p in lire(mafand / "train.jsonl")] == ["O ye kɛ."]
+    assert len(lire(mafand / "test.jsonl")) == 1 and len(lire(mafand / "validation.jsonl")) == 1
+
+
+def test_jeux_locaux(tmp_path):
+    pytest.importorskip("datasets")
+    from eval.corpora import load_any, load_split, local_files
+
+    d = tmp_path / "jeu"
+    d.mkdir()
+    for split in ("train", "validation", "test"):
+        (d / f"{split}.jsonl").write_text(json.dumps({"bm": f"bm {split}", "fr": f"fr {split}"}),
+                                          encoding="utf-8")
+    (d / "notes.txt").write_text("ignoré")
+    assert set(local_files(str(d))) == {"train", "validation", "test"}
+    assert local_files(str(d / "train.jsonl")) == {"train": str(d / "train.jsonl")}
+    assert local_files("RobotsMali/jeli-asr") is None
+    assert load_split(str(d))[0]["bm"] == "bm test"  # test d'abord, comme sur le Hub
+    assert load_any(str(d / "train.jsonl"))["train"][0]["fr"] == "fr train"
