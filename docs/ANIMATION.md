@@ -28,14 +28,29 @@ Une scène donne autant de vidéos que de participants, sans aucune retouche.
 
 ## Le moteur : `animation/`
 
-Le moteur suit le principe des marionnettes 2D (Cartoon Animator, Live2D en
-plus simple). Chaque personnage est un empilement de calques : corps,
-oreilles, tête, yeux, pupilles, sourcils, nez, bouche, coiffe. Quand la tête
-tourne, chaque calque glisse **selon sa profondeur**. Le nez et la bouche
-glissent beaucoup dans le sens du regard. Les oreilles et les cheveux de
-derrière glissent en sens inverse et passent sous la tête. Les traits
-s'écrasent un peu en largeur. L'œil y voit une rotation, sans qu'on ait
-dessiné de profil.
+Le moteur suit le principe des marionnettes 2D comme Cartoon Animator.
+Chaque personnage est un empilement de calques : corps, oreilles, tête,
+yeux, pupilles, sourcils, nez, bouche, coiffe.
+
+- **La tête est en volume** (`animation/volume.py`). Le dessin de la tête
+  (visage, foulard, bonnet, barbe) est plaqué sur un ellipsoïde qui tourne
+  en perspective, jusqu'à 30° de côté et 12° vers le haut ou le bas. Le côté
+  qui s'éloigne s'écrase, celui qui vient vers nous s'élargit. Les traits
+  sont des points de la surface, chacun avec son relief : le nez dépasse et
+  déborde sur la joue, l'œil du fond rétrécit, les oreilles passent derrière.
+  Une ombre douce vers les bords donne le volume. Il suffit d'un seul dessin
+  de face.
+- **Le jeu est automatique** : celui qui parle hoche la tête sur ses
+  syllabes fortes, lève les sourcils sur l'insistance et à la fin d'une
+  question, et balance le corps. Celui qui écoute se tourne vers lui et
+  réagit au début de chaque réplique. Tous clignent des yeux et respirent.
+- **La caméra fait le montage** : plan rapproché sur celui qui parle, plan
+  large une réplique sur trois, coupe au début de chaque réplique, et un
+  léger travelling avant pendant chaque plan. `"cadrage": "fixe"` dans
+  l'épisode garde le plan large.
+- **Le décor** est une image (`"fond": {"image": "fond.png"}`). L'épisode
+  d'essai en dessine une, une cour (`animation/demo.py`). Un décor fait par
+  un générateur d'images est bien meilleur (prompt plus bas).
 
 ```bash
 python -m animation demo        # deux personnages d'essai + un épisode en voix factice
@@ -163,6 +178,16 @@ qui marche se fait en trois temps :
 
 > La même image exactement, à l'identique, mais les yeux fermés, paupières
 > dessinées comme deux traits courbes. Rien d'autre ne change.
+
+**Prompt 5 — un décor** (format vertical, pour TikTok) :
+
+> Décor de dessin animé 2D, même style que ces personnages (contours brun
+> foncé, aplats, couleurs chaudes), sans aucun personnage : une cour
+> d'une maison à Bamako, mur en banco ocre, une porte en bois, un manguier,
+> un banc, une bouilloire en plastique, la lumière du matin. Vue à hauteur
+> d'homme, de face. La moitié basse de l'image est simple et dégagée : les
+> personnages se tiennent devant. Pas de texte. Format portrait 9:16,
+> 1080 × 1920.
 
 **Pour un second personnage**, reprendre le prompt 1 en joignant l'image du
 premier : « dans exactement le même style que ce personnage ». Les

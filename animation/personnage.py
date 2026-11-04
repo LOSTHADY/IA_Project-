@@ -80,6 +80,7 @@ class Pose:
     bouche: str = "X"
     cligne: bool = False
     respiration: float = 0.0  # de 0 à 1
+    sourcils: float = 0.0  # 1 : sourcils levés (surprise, question, insistance)
 
 
 @dataclass
@@ -90,7 +91,11 @@ class Personnage:
     pivot_cou: tuple[float, float]
     amplitude_lacet: float = 55.0  # glissement, en pixels, d'une partie de profondeur 1
     amplitude_tangage: float = 28.0
+    volume: bool = True  # tête plaquée sur un ellipsoïde (volume.py) ; sinon parallaxe
+    angle_lacet: float = 38.0  # degrés, pour un lacet de 1
+    angle_tangage: float = 14.0
     _cache: dict = field(default_factory=dict, repr=False)
+    _volume: object = field(default=None, repr=False)
 
     @property
     def centre_tete(self) -> float:
@@ -107,38 +112,86 @@ class Personnage:
             self._cache[cle] = image.resize((largeur, image.height), Image.LANCZOS)
         return self._cache[cle]
 
+    def _redimensionne2(self, partie: Partie, image: Image.Image, sx: float, sy: float) -> Image.Image:
+        sx, sy = round(sx, 2), round(sy, 2)
+        if abs(sx - 1) < 0.005 and abs(sy - 1) < 0.005:
+            return image
+        cle = (partie.nom, id(image), sx, sy)
+        if cle not in self._cache:
+            self._cache[cle] = image.resize((max(1, round(image.width * sx)),
+                                             max(1, round(image.height * sy))), Image.LANCZOS)
+            if len(self._cache) > 3000:
+                self._cache.clear()
+        return self._cache[cle]
+
     def rendre(self, pose: Pose) -> Image.Image:
         """L'image RGBA du personnage dans cette pose, à la taille ``taille``.
 
         Les parties sont empilées dans l'ordre. Chaque suite de parties d'un
         même groupe forme un calque : les cheveux de derrière, qui tournent
         avec la tête, restent ainsi sous le corps."""
+        if self.volume:
+            from .volume import SURFACE, Volume
+            if self._volume is None:
+                self._volume = Volume(self.parties, self.angle_lacet, self.angle_tangage)
+            vol = self._volume
+            th, ph = vol.angles(pose.lacet, pose.tangage)
         cx = self.centre_tete
         respire = 2.5 * math.sin(2 * math.pi * pose.respiration)
         calques: list[tuple[str, Image.Image]] = []
+        en_attente: list[Partie] = []  # parties de surface consécutives, plaquées ensemble
+
+        def calque(groupe: str) -> Image.Image:
+            if not calques or calques[-1][0] != groupe:
+                calques.append((groupe, Image.new("RGBA", self.taille, (0, 0, 0, 0))))
+            return calques[-1][1]
+
+        def plaquer():
+            if en_attente:
+                image, (ox, oy) = vol.surface(en_attente, pose, th, ph)
+                calque("tete").alpha_composite(image, (ox, oy + round(respire * 0.6)))
+                en_attente.clear()
+
         for p in self.parties:
+            if self.volume and p.groupe == "tete" and p.nom in SURFACE:
+                if calques and calques[-1][0] != "tete":
+                    plaquer()
+                en_attente.append(p)
+                continue
+            if self.volume:
+                plaquer()
             image = p.image(pose)
             if image is None:
                 continue
             x, y = p.position
-            if p.groupe == "tete":
+            if p.groupe == "tete" and self.volume:
+                if p.role == "sourcils":
+                    y -= pose.sourcils * 0.07 * vol.B
+                x, y, sx, sy = vol.trait(p.nom, x, y, th, ph)
+                if p.role == "pupilles":
+                    x += pose.regard[0] * p.course
+                    y += pose.regard[1] * p.course * 0.6
+                image = self._redimensionne2(p, image, sx, sy)
+            elif p.groupe == "tete":
                 serre = 1 - 0.12 * abs(pose.lacet)  # les traits se rapprochent de l'axe
                 x = cx + (x - cx) * serre + pose.lacet * p.profondeur * self.amplitude_lacet
                 y += pose.tangage * p.profondeur * self.amplitude_tangage
+                if p.role == "sourcils":
+                    y -= pose.sourcils * 10
                 if p.role == "pupilles":
                     x += pose.regard[0] * p.course
                     y += pose.regard[1] * p.course * 0.6
                 image = self._redimensionne(p, image, 1 - p.compression * abs(pose.lacet))
             y += respire if p.groupe == "corps" else respire * 0.6
-            if not calques or calques[-1][0] != p.groupe:
-                calques.append((p.groupe, Image.new("RGBA", self.taille, (0, 0, 0, 0))))
-            calques[-1][1].alpha_composite(
+            calque(p.groupe).alpha_composite(
                 image, (round(x - image.width / 2), round(y - image.height / 2)))
+        if self.volume:
+            plaquer()
         rendu = Image.new("RGBA", self.taille, (0, 0, 0, 0))
-        for groupe, calque in calques:
+        for groupe, c in calques:
             if groupe == "tete" and abs(pose.roulis) > 0.05:
-                calque = calque.rotate(pose.roulis, resample=Image.BICUBIC, center=self.pivot_cou)
-            rendu.alpha_composite(calque)
+                c = c.rotate(pose.roulis, resample=Image.BICUBIC, center=self.pivot_cou)
+            rendu.alpha_composite(c)
         return rendu
 
 
@@ -185,7 +238,9 @@ def _depuis_json(dossier: Path, d: dict) -> Personnage:
         nom=d.get("nom", dossier.name), taille=tuple(d["taille"]), parties=parties,
         pivot_cou=tuple(d.get("pivot_cou") or _pivot(parties, tuple(d["taille"]))),
         amplitude_lacet=d.get("amplitude_lacet", 55.0),
-        amplitude_tangage=d.get("amplitude_tangage", 28.0))
+        amplitude_tangage=d.get("amplitude_tangage", 28.0),
+        volume=d.get("volume", True), angle_lacet=d.get("angle_lacet", 38.0),
+        angle_tangage=d.get("angle_tangage", 14.0))
 
 
 def _depuis_calques(dossier: Path) -> Personnage:

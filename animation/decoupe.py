@@ -239,7 +239,12 @@ def decouper(source: str | Path, destination: str | Path) -> Path:
 
     # --- le corps : tout le reste, et la peau du cou prolongée sous la tête ---
     x0, x1, y0 = r["cou"]
-    sous_tete = tete & _rect(forme, (x0, y0, x1, forme[0]))
+    # un dôme, pas un rectangle : quand la tête tourne, le haut du cou se
+    # découvre, et il doit avoir la forme d'un cou
+    yy, xx = np.mgrid[: forme[0], : forme[1]]
+    milieu, demi = (x0 + x1) / 2, (x1 - x0) / 2
+    dome = (np.abs(xx - milieu) <= demi) & (yy >= y0 + 0.9 * demi * ((xx - milieu) / demi) ** 2)
+    sous_tete = tete & dome
     corps = image.copy()
     corps[sous_tete] = peau
     calques = {
@@ -260,6 +265,8 @@ def decouper(source: str | Path, destination: str | Path) -> Path:
     for f, im in planche.items():
         if f == "X":
             continue
+        # bouches ouvertes un peu plus grandes que nature : elles se lisent mieux
+        im = im.resize((round(im.width * 1.15), round(im.height * 1.15)), Image.LANCZOS)
         toile = Image.new("RGBA", (forme[1], forme[0]), (0, 0, 0, 0))
         toile.alpha_composite(im, (round(milieu - im.width / 2), int(haut_levres) - 2))
         bouches[f] = toile
@@ -308,6 +315,7 @@ def decouper(source: str | Path, destination: str | Path) -> Path:
     description = {"nom": destination.name, "taille": [round(forme[1] * echelle), round(forme[0] * echelle)],
                    "pivot_cou": [v * echelle for v in r["pivot_cou"]],
                    "amplitude_lacet": 70 * echelle, "amplitude_tangage": 36 * echelle,
+                   "angle_lacet": 30.0, "angle_tangage": 12.0,
                    "parties": parties}
     (destination / "personnage.json").write_text(
         json.dumps(description, indent=1, ensure_ascii=False), encoding="utf-8")

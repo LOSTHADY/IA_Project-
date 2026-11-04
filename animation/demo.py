@@ -313,6 +313,63 @@ def episode_demo(dossier: Path, noms: tuple[str, str] = ("awa", "seydou"),
         r["audio"] = f"{r['qui']}_{k // 2 + 1}.wav"
         sf.write(str(dossier / r["audio"]),
                  voix_factice(r["texte"], 230.0 if r["qui"] == a else 125.0, graine=k), 44100)
+    if echelle != 0.8:  # vrais personnages : un décor plutôt qu'un dégradé
+        fond_cour(dossier / "fond.png")
+        d["fond"] = {"image": "fond.png"}
+        for p in d["personnages"].values():
+            p["y"] = 1920
     fichier = dossier / "episode.json"
     fichier.write_text(json.dumps(d, indent=1, ensure_ascii=False), encoding="utf-8")
     return fichier
+
+
+def fond_cour(sortie: Path, taille: tuple[int, int] = (1080, 1920)) -> Path:
+    """Un décor d'essai : une cour, un mur en banco, une porte, un arbre."""
+    import numpy as np
+    from PIL import ImageFilter
+    w, h = taille
+    rng = np.random.default_rng(3)
+    k = np.linspace(0, 1, h)[:, None, None]
+    ciel = (np.array([120, 185, 225]) * (1 - k) + np.array([250, 215, 160]) * k)
+    image = Image.fromarray(np.repeat(ciel, w, axis=1).astype(np.uint8), "RGB").convert("RGBA")
+    d = ImageDraw.Draw(image)
+    haut_mur, sol = int(h * 0.30), int(h * 0.72)
+    # mur en banco, arrondi en haut, avec ses irrégularités
+    banco, banco_sombre = (196, 128, 78), (168, 104, 60)
+    d.rectangle([0, haut_mur, w, sol], fill=banco)
+    for x in range(-40, w + 80, 120):
+        d.ellipse([x, haut_mur - 40, x + 120, haut_mur + 40], fill=banco)
+    texture = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    t = ImageDraw.Draw(texture)
+    for _ in range(260):
+        x, y = rng.uniform(0, w), rng.uniform(haut_mur, sol)
+        rx, ry = rng.uniform(15, 60), rng.uniform(6, 18)
+        t.ellipse([x - rx, y - ry, x + rx, y + ry], fill=banco_sombre + (int(rng.uniform(40, 110)),))
+    image.alpha_composite(texture.filter(ImageFilter.GaussianBlur(6)))
+    d = ImageDraw.Draw(image)
+    # porte en bois
+    px0, px1 = int(w * 0.62), int(w * 0.86)
+    d.rectangle([px0, int(h * 0.42), px1, sol], fill=(110, 70, 40), outline=CONTOUR, width=8)
+    for x in range(px0 + 30, px1, 40):
+        d.line([(x, int(h * 0.42) + 10), (x, sol - 6)], fill=(90, 56, 30), width=5)
+    d.ellipse([px1 - 50, int(h * 0.57), px1 - 30, int(h * 0.57) + 20], fill=(230, 190, 90))
+    # sol de terre
+    k2 = np.linspace(0, 1, h - sol)[:, None, None]
+    terre = (np.array([214, 160, 104]) * (1 - k2) + np.array([186, 128, 78]) * k2)
+    image.paste(Image.fromarray(np.repeat(terre, w, axis=1).astype(np.uint8), "RGB"), (0, sol))
+    d = ImageDraw.Draw(image)
+    d.rectangle([0, sol - 6, w, sol + 6], fill=(150, 95, 55))
+    # arbre : tronc et feuillage qui dépasse du mur
+    d.polygon([(70, sol), (110, haut_mur + 40), (150, haut_mur + 40), (190, sol)], fill=(95, 62, 40),
+              outline=CONTOUR)
+    feuillage = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    f = ImageDraw.Draw(feuillage)
+    for _ in range(40):
+        x, y, r = rng.uniform(-60, 420), rng.uniform(80, haut_mur + 120), rng.uniform(70, 140)
+        vert = (int(rng.uniform(50, 80)), int(rng.uniform(110, 150)), int(rng.uniform(50, 70)), 255)
+        f.ellipse([x - r, y - r, x + r, y + r], fill=vert)
+    image.alpha_composite(feuillage)
+    # un léger flou : le décor reste derrière les personnages
+    image = image.filter(ImageFilter.GaussianBlur(2.5))
+    image.convert("RGB").save(sortie)
+    return sortie

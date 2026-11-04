@@ -1,15 +1,17 @@
 {
  "nom": "bakary",
  "taille": [
-  696,
-  956
+  963,
+  1323
  ],
  "pivot_cou": [
-  344.5,
-  373.75
+  477.0,
+  517.5
  ],
- "amplitude_lacet": 45.5,
- "amplitude_tangage": 23.400000000000002,
+ "amplitude_lacet": 63.0,
+ "amplitude_tangage": 32.4,
+ "angle_lacet": 30.0,
+ "angle_tangage": 12.0,
  "parties": [
   {
    "nom": "corps",
@@ -17,8 +19,8 @@
     "defaut": "corps.png"
    },
    "position": [
-    347.1,
-    624.0
+    480.6,
+    864.0
    ]
   },
   {
@@ -27,8 +29,8 @@
     "defaut": "oreilles.png"
    },
    "position": [
-    342.55,
-    236.6
+    474.3,
+    327.6
    ],
    "profondeur": -0.15
   },
@@ -38,8 +40,8 @@
     "defaut": "tete.png"
    },
    "position": [
-    343.2,
-    200.525
+    475.2,
+    277.65000000000003
    ]
   },
   {
@@ -49,8 +51,8 @@
     "fermes": "blanc_yeux_fermes.png"
    },
    "position": [
-    344.175,
-    209.3
+    476.55,
+    289.8
    ],
    "groupe": "tete",
    "role": "yeux",
@@ -63,12 +65,12 @@
     "defaut": "pupilles.png"
    },
    "position": [
-    345.475,
-    208.65
+    478.35,
+    288.90000000000003
    ],
    "profondeur": 0.62,
    "compression": 0.27,
-   "course": 6.0
+   "course": 8.307692307692308
   },
   {
    "nom": "yeux",
@@ -77,8 +79,8 @@
     "fermes": "yeux_fermes.png"
    },
    "position": [
-    344.175,
-    209.3
+    476.55,
+    289.8
    ],
    "profondeur": 0.6,
    "compression": 0.25
@@ -89,8 +91,8 @@
     "defaut": "sourcils.png"
    },
    "position": [
-    344.175,
-    170.3
+    476.55,
+    235.8
    ],
    "profondeur": 0.62,
    "compression": 0.25
@@ -101,8 +103,8 @@
     "defaut": "nez.png"
    },
    "position": [
-    344.5,
-    261.3
+    477.0,
+    361.8
    ],
    "profondeur": 0.9,
    "compression": 0.2
@@ -121,8 +123,8 @@
     "H": "bouche_H.png"
    },
    "position": [
-    344.825,
-    323.7
+    476.55,
+    455.85
    ],
    "profondeur": 0.75,
    "compression": 0.27

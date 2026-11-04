@@ -1,15 +1,17 @@
 {
  "nom": "fanta",
  "taille": [
-  696,
-  956
+  963,
+  1323
  ],
  "pivot_cou": [
-  344.5,
-  364.0
+  477.0,
+  504.0
  ],
- "amplitude_lacet": 45.5,
- "amplitude_tangage": 23.400000000000002,
+ "amplitude_lacet": 63.0,
+ "amplitude_tangage": 32.4,
+ "angle_lacet": 30.0,
+ "angle_tangage": 12.0,
  "parties": [
   {
    "nom": "corps",
@@ -17,8 +19,8 @@
     "defaut": "corps.png"
    },
    "position": [
-    346.45,
-    620.75
+    479.7,
+    859.5
    ]
   },
   {
@@ -27,8 +29,8 @@
     "defaut": "oreilles.png"
    },
    "position": [
-    342.875,
-    238.225
+    474.75,
+    329.85
    ],
    "profondeur": -0.15
   },
@@ -38,8 +40,8 @@
     "defaut": "tete.png"
    },
    "position": [
-    342.875,
-    194.025
+    474.75,
+    268.65000000000003
    ]
   },
   {
@@ -49,8 +51,8 @@
     "fermes": "blanc_yeux_fermes.png"
    },
    "position": [
-    343.2,
-    216.125
+    475.2,
+    299.25
    ],
    "groupe": "tete",
    "role": "yeux",
@@ -63,12 +65,12 @@
     "defaut": "pupilles.png"
    },
    "position": [
-    345.475,
-    216.125
+    478.35,
+    299.25
    ],
    "profondeur": 0.62,
    "compression": 0.27,
-   "course": 6.0
+   "course": 8.307692307692308
   },
   {
    "nom": "yeux",
@@ -77,8 +79,8 @@
     "fermes": "yeux_fermes.png"
    },
    "position": [
-    342.875,
-    212.875
+    474.75,
+    294.75
    ],
    "profondeur": 0.6,
    "compression": 0.25
@@ -89,8 +91,8 @@
     "defaut": "sourcils.png"
    },
    "position": [
-    346.125,
-    169.65
+    479.25,
+    234.9
    ],
    "profondeur": 0.62,
    "compression": 0.25
@@ -101,8 +103,8 @@
     "defaut": "nez.png"
    },
    "position": [
-    344.175,
-    270.075
+    476.55,
+    373.95
    ],
    "profondeur": 0.9,
    "compression": 0.2
@@ -121,8 +123,8 @@
     "H": "bouche_H.png"
    },
    "position": [
-    344.175,
-    326.95
+    477.0,
+    459.45
    ],
    "profondeur": 0.75,
    "compression": 0.27

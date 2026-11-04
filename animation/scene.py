@@ -81,6 +81,8 @@ class Acteur:
     lacet: float = 0.0
     tangage: float = 0.0
     roulis: float = 0.0
+    sourcils: float = 0.0
+    balance: float = 0.0
     clignements: set[int] = field(default_factory=set)
     phases: list[float] = field(default_factory=list)
 
@@ -148,6 +150,8 @@ class Episode:
         else:
             self.fond = _degrade(self.taille, fond.get("haut", "#fde2b3"), fond.get("bas", "#e9a66b"))
         self.sous_titres = d.get("sous_titres", True)
+        self.cadrage = d.get("cadrage", "auto")  # "auto" : plans larges et rapprochés ; "fixe"
+        self.zoom_serre = d.get("zoom_serre", 1.7)
         self.acteurs: dict[str, Acteur] = {}
         for i, (nom, a) in enumerate(d["personnages"].items()):
             r = random.Random(f"{nom}-{i}")
@@ -208,15 +212,28 @@ class Episode:
                 cible_roulis = imposes["roulis"] if imposes["roulis"] is not None else cible_roulis
             else:  # écoute : se tourne vers celui qui parle
                 cible_lacet = 0.55 * np.sign(locuteur.x - acteur.x) + 0.1 * acteur.derive(t, 0)
+        # sourcils : levés sur les syllabes les plus fortes, et à la fin d'une question
+        cible_sourcils = 0.0
+        cible_balance = 0.8 * acteur.derive(t, 1)
+        if parle is not None and parle.qui == nom:
+            j = min(int((t - parle.debut) * self.fps), len(parle.energie) - 1)
+            cible_sourcils = max(0.0, min(1.0, (parle.energie[j] - 0.75) * 4))
+            if parle.texte.rstrip().endswith("?") and t - parle.debut > 0.6 * parle.duree:
+                cible_sourcils = max(cible_sourcils, 0.9)
+            cible_balance += 1.6 * parle.energie[j] * math.sin(1.3 * t + acteur.graine)
+        elif parle is not None and t - parle.debut < 0.8:  # l'auditeur réagit à la réplique
+            cible_sourcils = 0.45
         # amortissement : la tête rejoint sa cible sans à-coup
         k = 1 - math.exp(-7.0 / self.fps)
+        acteur.sourcils += (cible_sourcils - acteur.sourcils) * k * 1.8
+        acteur.balance += (cible_balance - acteur.balance) * k * 0.6
         acteur.lacet += (cible_lacet - acteur.lacet) * k
         acteur.tangage += (cible_tangage - acteur.tangage) * k * 1.6
         acteur.roulis += (cible_roulis - acteur.roulis) * k
         lacet = max(-1.0, min(1.0, acteur.lacet))
         return Pose(lacet=lacet, tangage=max(-1.0, min(1.0, acteur.tangage)),
                     roulis=acteur.roulis, regard=(0.8 * lacet, 0.3 * acteur.tangage),
-                    bouche=bouche, cligne=i in acteur.clignements,
+                    bouche=bouche, cligne=i in acteur.clignements, sourcils=acteur.sourcils,
                     respiration=(t / 3.6 + acteur.graine * 0.3) % 1.0)
 
     # --- rendu ---
@@ -241,19 +258,59 @@ class Episode:
                         stroke_width=max(3, w // 200), stroke_fill=(40, 25, 20))
             y += int(police.size * 1.25)
 
+    # --- caméra ---
+
+    def camera(self, t: float) -> tuple[float, float, float]:
+        """(x, y, zoom) : le point de la scène au centre de l'écran, et le grossissement.
+
+        Une réplique sur trois en plan large, les autres en plan rapproché sur
+        celui qui parle, avec un léger travelling avant pendant le plan : c'est
+        le montage des vidéos courtes. On coupe d'un plan à l'autre au début
+        de chaque réplique."""
+        w, h = self.taille
+        large = (w / 2, h / 2, 1.0)
+        if self.cadrage == "fixe":
+            return large
+        precedentes = [r for r in self.repliques if r.debut <= t]
+        if not precedentes:
+            return large
+        k = len(precedentes) - 1
+        r = precedentes[-1]
+        avance = 1 + 0.035 * min(t - r.debut, r.duree + 0.5)
+        if k % 3 == 2 or len(self.acteurs) == 1 and k % 2:
+            return (w / 2, h / 2, 1.0 * avance)
+        acteur = self.acteurs[r.qui]
+        p = acteur.personnage
+        tete_y = acteur.y - (p.taille[1] - p.pivot_cou[1] * 0.75) * acteur.echelle
+        zoom = self.zoom_serre * avance
+        # le visage un peu au-dessous du milieu : les sous-titres sont en haut
+        return (acteur.x, tete_y - 0.06 * h / zoom, zoom)
+
     def image(self, i: int, poses: dict[str, Pose] | None = None) -> Image.Image:
         """L'image numéro ``i``. Les images doivent être demandées dans l'ordre :
         la tête de chaque personnage est lissée d'une image à la suivante."""
         t = i / self.fps
-        image = self.fond.copy()
+        w, h = self.taille
+        cx, cy, zoom = self.camera(t)
+        # le fond : la portion de la scène que voit la caméra
+        x0, y0 = cx - w / 2 / zoom, cy - h / 2 / zoom
+        if zoom == 1.0 and x0 == 0 and y0 == 0:
+            image = self.fond.copy()
+        else:
+            image = self.fond.resize((w, h), Image.BILINEAR,
+                                     box=(max(0, x0), max(0, y0), min(w, x0 + w / zoom),
+                                          min(h, y0 + h / zoom)))
         for nom, acteur in self.acteurs.items():
             pose = poses[nom] if poses else self._pose(nom, acteur, i, t)
             rendu = acteur.personnage.rendre(pose)
-            if acteur.echelle != 1.0:
-                rendu = rendu.resize((round(rendu.width * acteur.echelle),
-                                      round(rendu.height * acteur.echelle)), Image.LANCZOS)
-            image.alpha_composite(rendu, (round(acteur.x - rendu.width / 2),
-                                          round(acteur.y - rendu.height)))
+            if abs(acteur.balance) > 0.05:  # le corps se balance, pivot aux hanches
+                rendu = rendu.rotate(acteur.balance, resample=Image.BICUBIC,
+                                     center=(rendu.width / 2, rendu.height))
+            s = acteur.echelle * zoom
+            if abs(s - 1) > 1e-3:
+                rendu = rendu.resize((round(rendu.width * s), round(rendu.height * s)), Image.BILINEAR)
+            ex, ey = (acteur.x - cx) * zoom + w / 2, (acteur.y - cy) * zoom + h / 2
+            image.alpha_composite(rendu, (round(ex - rendu.width / 2), round(ey - rendu.height)))
         r = self.replique_a(t)
         if self.sous_titres and r is not None and r.texte:
             self._sous_titre(image, r)

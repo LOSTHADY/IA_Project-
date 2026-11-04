@@ -154,3 +154,38 @@ def test_decoupe_des_dessins_de_chatgpt(tmp_path):
     assert im[y - 5:y + 5, x - 5:x + 5].std(axis=(0, 1)).max() < 12
     for pose in (Pose(lacet=1), Pose(roulis=8), Pose(cligne=True), Pose(bouche="D")):
         p.rendre(pose)
+
+
+def test_volume_de_face_ne_change_rien(awa):
+    """À angle nul, la tête plaquée sur l'ellipsoïde est le dessin d'origine."""
+    p = charger(awa)
+    plat = charger(awa)
+    plat.volume = False
+    a = np.asarray(p.rendre(Pose())).astype(int)
+    b = np.asarray(plat.rendre(Pose())).astype(int)
+    assert np.abs(a - b).mean() < 2.0
+
+
+def test_volume_le_nez_tourne_plus_que_les_oreilles(awa):
+    from animation.volume import Volume
+    p = charger(awa)
+    v = Volume(p.parties, 30, 12)
+    th, ph = v.angles(1.0, 0.0)
+    nez = next(x for x in p.parties if x.nom == "nez")
+    oreilles = next(x for x in p.parties if x.nom == "oreilles")
+    xn, _, sxn, _ = v.trait("nez", *nez.position, th, ph)
+    xo, _, _, _ = v.trait("oreilles", *oreilles.position, th, ph)
+    assert xn - nez.position[0] > 0.3 * v.A          # le nez part dans le sens du regard
+    assert xo - oreilles.position[0] < xn - nez.position[0]
+    # l'œil du fond se rétrécit, celui de devant s'élargit
+    _, _, s_g, _ = v.trait("yeux", v.cx - 0.4 * v.A, v.cy, th, ph)
+    _, _, s_d, _ = v.trait("yeux", v.cx + 0.4 * v.A, v.cy, th, ph)
+    assert s_d < s_g
+
+
+def test_camera_plan_rapproche_sur_celui_qui_parle(episode):
+    ep = Episode(episode, moteur_levres="audio")
+    a = ep.repliques[0]
+    x, _, zoom = ep.camera(a.debut + 0.1)
+    assert zoom > 1.5 and x == ep.acteurs["awa"].x
+    assert ep.camera(0.0) == (ep.taille[0] / 2, ep.taille[1] / 2, 1.0)
