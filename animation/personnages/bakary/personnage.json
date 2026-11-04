@@ -1,0 +1,131 @@
+{
+ "nom": "bakary",
+ "taille": [
+  696,
+  956
+ ],
+ "pivot_cou": [
+  344.5,
+  373.75
+ ],
+ "amplitude_lacet": 45.5,
+ "amplitude_tangage": 23.400000000000002,
+ "parties": [
+  {
+   "nom": "corps",
+   "images": {
+    "defaut": "corps.png"
+   },
+   "position": [
+    347.1,
+    624.0
+   ]
+  },
+  {
+   "nom": "oreilles",
+   "images": {
+    "defaut": "oreilles.png"
+   },
+   "position": [
+    342.55,
+    236.6
+   ],
+   "profondeur": -0.15
+  },
+  {
+   "nom": "tete",
+   "images": {
+    "defaut": "tete.png"
+   },
+   "position": [
+    343.2,
+    200.525
+   ]
+  },
+  {
+   "nom": "blanc_yeux",
+   "images": {
+    "ouverts": "blanc_yeux_ouverts.png",
+    "fermes": "blanc_yeux_fermes.png"
+   },
+   "position": [
+    344.175,
+    209.3
+   ],
+   "groupe": "tete",
+   "role": "yeux",
+   "profondeur": 0.6,
+   "compression": 0.25
+  },
+  {
+   "nom": "pupilles",
+   "images": {
+    "defaut": "pupilles.png"
+   },
+   "position": [
+    345.475,
+    208.65
+   ],
+   "profondeur": 0.62,
+   "compression": 0.27,
+   "course": 6.0
+  },
+  {
+   "nom": "yeux",
+   "images": {
+    "ouverts": "yeux_ouverts.png",
+    "fermes": "yeux_fermes.png"
+   },
+   "position": [
+    344.175,
+    209.3
+   ],
+   "profondeur": 0.6,
+   "compression": 0.25
+  },
+  {
+   "nom": "sourcils",
+   "images": {
+    "defaut": "sourcils.png"
+   },
+   "position": [
+    344.175,
+    170.3
+   ],
+   "profondeur": 0.62,
+   "compression": 0.25
+  },
+  {
+   "nom": "nez",
+   "images": {
+    "defaut": "nez.png"
+   },
+   "position": [
+    344.5,
+    261.3
+   ],
+   "profondeur": 0.9,
+   "compression": 0.2
+  },
+  {
+   "nom": "bouche",
+   "images": {
+    "X": "bouche_X.png",
+    "A": "bouche_A.png",
+    "B": "bouche_B.png",
+    "C": "bouche_C.png",
+    "D": "bouche_D.png",
+    "E": "bouche_E.png",
+    "F": "bouche_F.png",
+    "G": "bouche_G.png",
+    "H": "bouche_H.png"
+   },
+   "position": [
+    344.825,
+    323.7
+   ],
+   "profondeur": 0.75,
+   "compression": 0.27
+  }
+ ]
+}

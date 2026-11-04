@@ -54,4 +54,5 @@ reports/
 
 # Vidéos rendues par animation/
 *.mp4
-animation/episodes/demo/   # créé par « python -m animation demo »
+# Épisodes créés par « python -m animation demo »
+animation/episodes/

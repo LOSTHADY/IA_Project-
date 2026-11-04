@@ -5,6 +5,7 @@
     python -m animation rendre animation/episodes/demo/episode.json demo.mp4
     python -m animation rendre episode.json essai.mp4 --apercu   # moitié de taille, plus rapide
     python -m animation image episode.json 45 image.png          # une seule image, pour vérifier
+    python -m animation decouper animation/brut/fanta animation/personnages/fanta
 """
 
 from __future__ import annotations
@@ -58,6 +59,9 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--apercu", action="store_true", help="moitié de la taille, deux fois plus vite")
     r.add_argument("--levres", choices=("auto", "audio", "rhubarb"), default="auto",
                    help="synchronisation labiale (auto : Rhubarb s'il est installé)")
+    dc = sous.add_parser("decouper", help="personnage dessiné d'une pièce -> calques (reperes.json)")
+    dc.add_argument("source")
+    dc.add_argument("destination")
     im = sous.add_parser("image", help="une image de l'épisode, en PNG")
     im.add_argument("episode")
     im.add_argument("numero", type=int)
@@ -68,6 +72,8 @@ def main(argv: list[str] | None = None) -> None:
         for nom in demo.STYLES:
             print(demo.creer(nom, RACINE / "personnages" / nom))
         print(demo.episode_demo(RACINE / "episodes" / "demo"))
+        if all((RACINE / "personnages" / n / "personnage.json").exists() for n in ("fanta", "bakary")):
+            print(demo.episode_demo(RACINE / "episodes" / "fanta_bakary", ("fanta", "bakary"), 0.85))
     elif a.commande == "planche":
         print(planche(a.dossier, a.sortie))
     elif a.commande == "rendre":
@@ -75,6 +81,9 @@ def main(argv: list[str] | None = None) -> None:
         ep = Episode(a.episode, moteur_levres=a.levres)
         ep.rendre(a.sortie, echelle=0.5 if a.apercu else 1.0)
         print(f"{a.sortie} : {ep.duree:.1f} s de vidéo en {time.time() - debut:.0f} s")
+    elif a.commande == "decouper":
+        from .decoupe import decouper
+        print(decouper(a.source, a.destination))
     elif a.commande == "image":
         ep = Episode(a.episode)
         for i in range(a.numero + 1):  # dans l'ordre : la tête est lissée d'image en image

@@ -292,14 +292,27 @@ EPISODE_DEMO = {
 }
 
 
-def episode_demo(dossier: Path) -> Path:
-    """Épisode d'essai : deux personnages, quatre répliques en voix factice."""
+def episode_demo(dossier: Path, noms: tuple[str, str] = ("awa", "seydou"),
+                 echelle: float = 0.8) -> Path:
+    """Épisode d'essai : deux personnages, quatre répliques en voix factice
+    (une voix aiguë pour le premier, une grave pour le second)."""
+    import copy
     import soundfile as sf
     dossier.mkdir(parents=True, exist_ok=True)
-    hauteurs = {"awa": 230.0, "seydou": 125.0}
-    for k, r in enumerate(EPISODE_DEMO["repliques"]):
-        sf.write(str(dossier / r["audio"]), voix_factice(r["texte"], hauteurs[r["qui"]], graine=k),
-                 44100)
+    d = copy.deepcopy(EPISODE_DEMO)
+    a, b = noms
+    d["personnages"] = {
+        a: {"dossier": f"../../personnages/{a}", "x": 300, "y": 1820 if echelle == 0.8 else 1920,
+            "echelle": echelle},
+        b: {"dossier": f"../../personnages/{b}", "x": 780, "y": 1820 if echelle == 0.8 else 1920,
+            "echelle": echelle},
+    }
+    for k, r in enumerate(d["repliques"]):
+        r["qui"] = a if r["qui"] == "awa" else b
+        r["texte"] = r["texte"].replace("Seydou", b.capitalize())
+        r["audio"] = f"{r['qui']}_{k // 2 + 1}.wav"
+        sf.write(str(dossier / r["audio"]),
+                 voix_factice(r["texte"], 230.0 if r["qui"] == a else 125.0, graine=k), 44100)
     fichier = dossier / "episode.json"
-    fichier.write_text(json.dumps(EPISODE_DEMO, indent=1, ensure_ascii=False), encoding="utf-8")
+    fichier.write_text(json.dumps(d, indent=1, ensure_ascii=False), encoding="utf-8")
     return fichier

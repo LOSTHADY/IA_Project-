@@ -63,9 +63,11 @@ python -m animation image episode.json 45 image.png                 # une image,
   le jeu est automatique. Le format complet est décrit en tête de
   `animation/scene.py`.
 
-Les personnages Awa et Seydou de `animation/personnages/` sont dessinés par
-le programme (`animation/demo.py`). Ils servent à essayer le moteur en
-attendant les vrais dessins.
+Dans `animation/personnages/`, Awa et Seydou sont dessinés par le programme
+(`animation/demo.py`) : ce sont des personnages d'essai. Fanta et Bakary
+sont dessinés par ChatGPT, puis découpés automatiquement (voir plus bas).
+`python -m animation demo` crée aussi l'épisode d'essai
+`animation/episodes/fanta_bakary`.
 
 ## Fournir de vrais personnages
 
@@ -93,6 +95,28 @@ suivent la convention :
 Avec un `personnage.json` (voir celui d'Awa), on règle en plus la profondeur
 et l'écrasement de chaque partie, et le pivot du cou. Pour vérifier un
 personnage, on fait sa planche : `python -m animation planche <dossier> planche.png`.
+
+### Découper automatiquement un dessin fait d'une pièce
+
+C'est la méthode qui a servi pour **Fanta** et **Bakary**, dessinés par
+ChatGPT (`animation/brut/`). On n'a pas besoin de Photopea :
+`animation/decoupe.py` tire les calques de l'image entière, grâce à quelques
+repères notés une fois dans `reperes.json`. Ces repères sont un point de peau,
+un point dans chaque oreille et dans chaque partie de la tête (foulard,
+bonnet, barbe), les rectangles des traits, le centre des iris et le haut du
+cou. Le style plat fait le reste : un trait, c'est ce qui n'a pas la couleur
+de la peau. La peau est repeinte sous les traits, et les bouches viennent de
+la planche du prompt 2, mises à l'échelle de celle du dessin.
+
+```bash
+python -m animation decouper animation/brut/fanta animation/personnages/fanta
+python -m animation planche animation/personnages/fanta planche.png   # vérifier
+```
+
+Pour un nouveau personnage, copier le `reperes.json` de Fanta et ajuster les
+coordonnées : on les lit sur l'image en pixels, avec n'importe quel logiciel
+d'image. Sans image des yeux fermés, les paupières sont dessinées par le
+programme (c'est le cas de Bakary).
 
 ### Les dessins avec un générateur d'images (ChatGPT, etc.)
 

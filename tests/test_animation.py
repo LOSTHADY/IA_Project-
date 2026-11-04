@@ -131,3 +131,26 @@ def test_replique_d_un_inconnu(episode, tmp_path):
 def test_video(episode, tmp_path):
     sortie = Episode(episode, moteur_levres="audio").rendre(tmp_path / "v.mp4")
     assert sortie.stat().st_size > 1000
+
+
+def test_decoupe_des_dessins_de_chatgpt(tmp_path):
+    """Les images brutes de Fanta : chaque calque est là, et la tête n'a plus de traits."""
+    from pathlib import Path
+    from animation.decoupe import decouper
+    brut = Path(__file__).parent.parent / "animation" / "brut" / "fanta"
+    p = charger(decouper(brut, tmp_path / "fanta"))
+    noms = {x.nom for x in p.parties}
+    assert {"corps", "oreilles", "tete", "blanc_yeux", "pupilles", "yeux", "sourcils", "nez",
+            "bouche"} <= noms
+    bouche = next(x for x in p.parties if x.nom == "bouche")
+    assert set(bouche.images) == set(VISEMES)
+    assert len({im.size for im in bouche.images.values()}) == 1  # toutes sur la même boîte
+    # la tête sans traits : là où étaient les yeux, de la peau
+    tete = next(x for x in p.parties if x.nom == "tete")
+    yeux = next(x for x in p.parties if x.nom == "yeux")
+    im = np.asarray(tete.images["defaut"].convert("RGB")).astype(int)
+    x = round(yeux.position[0] - tete.position[0] + tete.images["defaut"].width / 2)
+    y = round(yeux.position[1] - tete.position[1] + tete.images["defaut"].height / 2)
+    assert im[y - 5:y + 5, x - 5:x + 5].std(axis=(0, 1)).max() < 12
+    for pose in (Pose(lacet=1), Pose(roulis=8), Pose(cligne=True), Pose(bouche="D")):
+        p.rendre(pose)
