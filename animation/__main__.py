@@ -74,6 +74,7 @@ def main(argv: list[str] | None = None) -> None:
         print(demo.episode_demo(RACINE / "episodes" / "demo"))
         if all((RACINE / "personnages" / n / "personnage.json").exists() for n in ("fanta", "bakary")):
             print(demo.episode_demo(RACINE / "episodes" / "fanta_bakary", ("fanta", "bakary"), 0.72))
+            print(demo.episode_volume(RACINE / "episodes" / "volume"))
     elif a.commande == "planche":
         print(planche(a.dossier, a.sortie))
     elif a.commande == "rendre":

@@ -84,6 +84,42 @@ sont dessinés par ChatGPT, puis découpés automatiquement (voir plus bas).
 `python -m animation demo` crée aussi l'épisode d'essai
 `animation/episodes/fanta_bakary`.
 
+## Personnages en volume : le tour complet (`animation/toon.py`)
+
+Un dessin de face ne montre pas le dos d'une tête. Pour qu'un personnage
+fasse un tour complet, se retourne ou montre son profil, il faut connaître
+sa forme. Les personnages en volume sont faits de formes simples : crâne et
+menton, nez, oreilles, foulard et son nœud ou bonnet, cou, boubou (une forme
+de révolution, plus large en bas), manches, avant-bras, mains et pieds.
+
+Chaque image est calculée par lancer de rayons, et rendue comme un dessin
+animé (*cel shading*) : deux tons par matière, une lumière franche, des
+contours épais à la silhouette et entre les matières. Le visage est celui du
+dessin de ChatGPT : ses yeux, pupilles, sourcils, nez et bouches (découpés
+par `decoupe.py`) sont plaqués sur l'avant de la tête et tournent avec elle.
+L'encolure brodée du boubou vient aussi du dessin.
+
+- **Ce qu'ils savent faire** : tourner sur 360°, la tête indépendamment du
+  corps, faire des gestes (l'avant-bras se lève sur les passages forts de
+  ce qu'ils disent), respirer, se balancer.
+- **Dans la scène** : une ombre portée au sol, et la profondeur. Le décor
+  bouge et grossit moins que les personnages quand la caméra avance
+  (parallaxe), et il est flou en plan rapproché.
+- **Dans un épisode** : `"fanta": {"toon": "fanta", "x": 330, "y": 1790,
+  "echelle": 0.82}`. Chacun se tourne d'abord un peu vers les autres. Les
+  `mouvements` d'une réplique acceptent `corps` (orientation en degrés : un
+  tour complet de 28 à 388), `x` (déplacement), `bras_g` et `bras_d`, et
+  `qui` pour viser un autre personnage que celui qui parle.
+- **Vitesse** : de 0,15 s (plan large) à 2,5 s (gros plan) par image et par
+  processeur. Les images sont rendues en parallèle sur tous les cœurs.
+
+`python -m animation demo` crée l'épisode d'essai `animation/episodes/volume`.
+Fanta y fait un tour sur elle-même, et Bakary se retourne vers la porte.
+
+Les formes et les couleurs de Fanta et de Bakary sont réglées dans
+`toon.modele()`. Pour un nouveau personnage, ajouter son modèle à cet
+endroit, puis découper son dessin de face pour le visage.
+
 ## Fournir de vrais personnages
 
 Un personnage est un dossier d'images PNG **transparentes, toutes de la même

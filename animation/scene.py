@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
+import os
 import random
 import shutil
 import subprocess
@@ -45,6 +47,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from . import levres
 from .personnage import Personnage, Pose, charger
+from . import toon as _toon
 
 SR = 44100
 POLICES = (
@@ -73,7 +76,7 @@ class Replique:
 @dataclass
 class Acteur:
     """Un personnage sur scène, et l'état lissé de sa tête."""
-    personnage: Personnage
+    personnage: "Personnage | _toon.Toon"
     x: float
     y: float
     echelle: float = 1.0
@@ -83,8 +86,24 @@ class Acteur:
     roulis: float = 0.0
     sourcils: float = 0.0
     balance: float = 0.0
+    corps: float = 0.0  # personnages en volume : orientation du corps (degrés)
+    orientation: float = 0.0  # orientation de repos, vers les autres
+    bras_g: float = 0.0
+    bras_d: float = 0.0
     clignements: set[int] = field(default_factory=set)
     phases: list[float] = field(default_factory=list)
+
+    @property
+    def volume(self) -> bool:
+        return isinstance(self.personnage, _toon.Toon)
+
+    @property
+    def tete_y(self) -> float:
+        """Hauteur du centre de la tête, dans la scène."""
+        if self.volume:
+            return self.y + self.personnage.m.tete_c[1] * self.echelle
+        p = self.personnage
+        return self.y - (p.taille[1] - p.pivot_cou[1] * 0.75) * self.echelle
 
     def derive(self, t: float, k: int) -> float:
         """Petit mouvement lent et jamais périodique (somme de sinus)."""
@@ -149,16 +168,32 @@ class Episode:
             self.fond = Image.open(racine / fond["image"]).convert("RGBA").resize(self.taille)
         else:
             self.fond = _degrade(self.taille, fond.get("haut", "#fde2b3"), fond.get("bas", "#e9a66b"))
+        from PIL import ImageFilter
+        self._fond_flou = self.fond.filter(ImageFilter.GaussianBlur(5))
+        ombre = Image.new("L", (420, 90), 0)
+        ImageDraw.Draw(ombre).ellipse([20, 10, 400, 80], fill=110)
+        ombre = ombre.filter(ImageFilter.GaussianBlur(12))
+        self._ombre = Image.merge("RGBA", (Image.new("L", ombre.size, 40), Image.new("L", ombre.size, 20),
+                                           Image.new("L", ombre.size, 10), ombre))
         self.sous_titres = d.get("sous_titres", True)
         self.cadrage = d.get("cadrage", "auto")  # "auto" : plans larges et rapprochés ; "fixe"
         self.zoom_serre = d.get("zoom_serre", 1.7)
+        self.fichier, self.moteur_levres = fichier, moteur_levres
         self.acteurs: dict[str, Acteur] = {}
         for i, (nom, a) in enumerate(d["personnages"].items()):
             r = random.Random(f"{nom}-{i}")
+            if "toon" in a:  # personnage en volume (toon.py) : tour complet possible
+                personnage = _toon.Toon(_toon.modele(a["toon"]))
+            else:
+                personnage = charger(racine / a["dossier"])
             self.acteurs[nom] = Acteur(
-                personnage=charger(racine / a["dossier"]), x=a["x"], y=a["y"],
+                personnage=personnage, x=a["x"], y=a["y"],
                 echelle=a.get("echelle", 1.0), graine=i,
                 phases=[r.uniform(0, 2 * math.pi) for _ in range(9)])
+        for nom, acteur in self.acteurs.items():  # chacun se tourne un peu vers les autres
+            autres = [b.x for n, b in self.acteurs.items() if n != nom]
+            defaut = 28.0 * float(np.sign(np.mean(autres) - acteur.x)) if autres else 0.0
+            acteur.orientation = acteur.corps = d["personnages"][nom].get("orientation", defaut)
         pause, t = d.get("pause", 0.35), d.get("intro", 0.6)
         self.repliques = []
         for r in d["repliques"]:
@@ -188,6 +223,27 @@ class Episode:
                 return r
         return None
 
+    def _replique_active(self, t: float) -> Replique | None:
+        """La réplique en cours, pause qui la suit comprise."""
+        actives = [r for r in self.repliques if r.debut <= t]
+        return actives[-1] if actives else None
+
+    @staticmethod
+    def _cles(r: Replique, nom: str) -> list[dict]:
+        """Mouvements imposés à ``nom`` pendant la réplique ``r`` : ceux sans
+        « qui » concernent celui qui parle."""
+        return [c for c in r.mouvements if c.get("qui", r.qui) == nom]
+
+    def etat(self, i: int) -> dict:
+        """Calcule l'image ``i`` du jeu de tous les acteurs (dans l'ordre des images)."""
+        t = i / self.fps
+        etats = {}
+        for nom, a in self.acteurs.items():
+            pose = self._pose(nom, a, i, t)
+            etats[nom] = {"pose": pose, "balance": a.balance, "corps": a.corps,
+                          "bras_g": a.bras_g, "bras_d": a.bras_d, "x": a.x}
+        return etats
+
     def _pose(self, nom: str, acteur: Acteur, i: int, t: float) -> Pose:
         parle = self.replique_a(t)
         cible_lacet = 0.25 * acteur.derive(t, 0)
@@ -205,7 +261,7 @@ class Episode:
                 e = parle.energie[min(j, len(parle.energie) - 1)]
                 cible_tangage += 0.35 * e - 0.1  # hoche la tête sur les syllabes fortes
                 cible_roulis += 3.0 * e * math.sin(0.9 * t + acteur.graine)
-                imposes = {c: _interpoler(parle.mouvements, t - parle.debut, c)
+                imposes = {c: _interpoler(self._cles(parle, nom), t - parle.debut, c)
                            for c in ("lacet", "tangage", "roulis")}
                 cible_lacet = imposes["lacet"] if imposes["lacet"] is not None else cible_lacet
                 cible_tangage = imposes["tangage"] if imposes["tangage"] is not None else cible_tangage
@@ -223,8 +279,38 @@ class Episode:
             cible_balance += 1.6 * parle.energie[j] * math.sin(1.3 * t + acteur.graine)
         elif parle is not None and t - parle.debut < 0.8:  # l'auditeur réagit à la réplique
             cible_sourcils = 0.45
+        # gestes : celui qui parle lève un avant-bras sur les passages forts
+        cible_g = cible_d = 0.0
+        if parle is not None and parle.qui == nom:
+            j = min(int((t - parle.debut) * self.fps), len(parle.energie) - 1)
+            fen = parle.energie[max(0, j - 8): j + 1].mean()
+            geste = max(0.0, min(0.85, fen * 1.5 - 0.35))
+            if acteur.derive(t * 0.5, 2) > 0:
+                cible_d = geste
+            else:
+                cible_g = geste
+        # corps : orientation de repos, ou mouvements imposés (tour, déplacement)
+        cible_corps = acteur.orientation + 360 * round((acteur.corps - acteur.orientation) / 360)
+        actif = self._replique_active(t)
+        if actif is not None:
+            cles = self._cles(actif, nom)
+            for champ in ("corps", "x", "bras_g", "bras_d"):
+                v = _interpoler(cles, t - actif.debut, champ)
+                if v is None:
+                    continue
+                if champ == "corps":
+                    cible_corps = v
+                elif champ == "x":
+                    acteur.x = v
+                elif champ == "bras_g":
+                    cible_g = v
+                else:
+                    cible_d = v
         # amortissement : la tête rejoint sa cible sans à-coup
         k = 1 - math.exp(-7.0 / self.fps)
+        acteur.corps += (cible_corps - acteur.corps) * k * 1.3
+        acteur.bras_g += (cible_g - acteur.bras_g) * k * 1.1
+        acteur.bras_d += (cible_d - acteur.bras_d) * k * 1.1
         acteur.sourcils += (cible_sourcils - acteur.sourcils) * k * 1.8
         acteur.balance += (cible_balance - acteur.balance) * k * 0.6
         acteur.lacet += (cible_lacet - acteur.lacet) * k
@@ -280,36 +366,54 @@ class Episode:
         if k % 3 == 2 or len(self.acteurs) == 1 and k % 2:
             return (w / 2, h / 2, 1.0 * avance)
         acteur = self.acteurs[r.qui]
-        p = acteur.personnage
-        tete_y = acteur.y - (p.taille[1] - p.pivot_cou[1] * 0.75) * acteur.echelle
+        tete_y = acteur.tete_y
         zoom = self.zoom_serre * avance
         # le visage un peu au-dessous du milieu : les sous-titres sont en haut
         return (acteur.x, tete_y - 0.06 * h / zoom, zoom)
 
-    def image(self, i: int, poses: dict[str, Pose] | None = None) -> Image.Image:
-        """L'image numéro ``i``. Les images doivent être demandées dans l'ordre :
-        la tête de chaque personnage est lissée d'une image à la suivante."""
+    def image(self, i: int, etats: dict | None = None) -> Image.Image:
+        """L'image numéro ``i``. Sans ``etats``, les images doivent être demandées
+        dans l'ordre : le jeu de chaque personnage est lissé d'une image à l'autre."""
+        if etats is None:
+            etats = self.etat(i)
         t = i / self.fps
         w, h = self.taille
         cx, cy, zoom = self.camera(t)
-        # le fond : la portion de la scène que voit la caméra
-        x0, y0 = cx - w / 2 / zoom, cy - h / 2 / zoom
-        if zoom == 1.0 and x0 == 0 and y0 == 0:
-            image = self.fond.copy()
+        # le fond, plus loin que les personnages : il bouge et grossit moins qu'eux
+        # (parallaxe), et il est flou en plan rapproché (profondeur de champ)
+        zf = 1 + (zoom - 1) * 0.45
+        fx, fy = w / 2 + (cx - w / 2) * 0.45, h / 2 + (cy - h / 2) * 0.45
+        x0, y0 = fx - w / 2 / zf, fy - h / 2 / zf
+        fond = self._fond_flou if zoom > 1.25 else self.fond
+        if abs(zf - 1) < 1e-3 and abs(x0) < 0.5 and abs(y0) < 0.5:
+            image = fond.copy()
         else:
-            image = self.fond.resize((w, h), Image.BILINEAR,
-                                     box=(max(0, x0), max(0, y0), min(w, x0 + w / zoom),
-                                          min(h, y0 + h / zoom)))
-        for nom, acteur in self.acteurs.items():
-            pose = poses[nom] if poses else self._pose(nom, acteur, i, t)
-            rendu = acteur.personnage.rendre(pose)
-            if abs(acteur.balance) > 0.05:  # le corps se balance, pivot aux hanches
-                rendu = rendu.rotate(acteur.balance, resample=Image.BICUBIC,
-                                     center=(rendu.width / 2, rendu.height))
+            image = fond.resize((w, h), Image.BILINEAR,
+                                box=(max(0, x0), max(0, y0), min(w, x0 + w / zf), min(h, y0 + h / zf)))
+        for nom, acteur in sorted(self.acteurs.items(), key=lambda kv: kv[1].y):
+            e = etats[nom]
+            pose = e["pose"]
             s = acteur.echelle * zoom
+            ex, ey = (e["x"] - cx) * zoom + w / 2, (acteur.y - cy) * zoom + h / 2
+            if acteur.volume:
+                pt = _toon.PoseToon(
+                    corps=e["corps"], tete=pose.lacet * 32, tangage=pose.tangage * 12,
+                    roulis=pose.roulis, bouche=pose.bouche, cligne=pose.cligne, regard=pose.regard,
+                    sourcils=pose.sourcils, bras_g=e["bras_g"], bras_d=e["bras_d"],
+                    respiration=pose.respiration, balance=e["balance"] * 0.6)
+                # ombre portée au sol : le personnage tient debout dans la scène
+                ombre = self._ombre.resize((max(2, round(420 * s)), max(2, round(90 * s))), Image.BILINEAR)
+                image.alpha_composite(ombre, (round(ex - ombre.width / 2), round(ey - ombre.height * 0.55)))
+                rendu = acteur.personnage.rendre(pt, s)
+                ax, ay = _toon.TAILLE[0] / 2 * s, (_toon.TAILLE[1] - _toon.SOL) * s
+                image.alpha_composite(rendu, (round(ex - ax), round(ey - ay)))
+                continue
+            rendu = acteur.personnage.rendre(pose)
+            if abs(e["balance"]) > 0.05:  # le corps se balance, pivot aux hanches
+                rendu = rendu.rotate(e["balance"], resample=Image.BICUBIC,
+                                     center=(rendu.width / 2, rendu.height))
             if abs(s - 1) > 1e-3:
                 rendu = rendu.resize((round(rendu.width * s), round(rendu.height * s)), Image.BILINEAR)
-            ex, ey = (acteur.x - cx) * zoom + w / 2, (acteur.y - cy) * zoom + h / 2
             image.alpha_composite(rendu, (round(ex - rendu.width / 2), round(ey - rendu.height)))
         r = self.replique_a(t)
         if self.sous_titres and r is not None and r.texte:
@@ -341,13 +445,33 @@ class Episode:
                  "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart",
                  str(sortie)], stdin=subprocess.PIPE)
             try:
-                for i in range(self.n_images):
-                    image = self.image(i)
-                    if (w, h) != image.size:
-                        image = image.resize((w, h), Image.BILINEAR)
-                    ffmpeg.stdin.write(image.tobytes())
+                # le jeu se calcule dans l'ordre ; les images, en parallèle
+                etats = [self.etat(i) for i in range(self.n_images)]
+                global _EPISODE
+                _EPISODE = self
+                processus = max(1, min(4, os.cpu_count() or 1))
+                taches = [(i, etats[i], (w, h)) for i in range(self.n_images)]
+                if processus > 1:
+                    with multiprocessing.get_context("fork").Pool(processus) as pool:
+                        for octets in pool.imap(_image_brute, taches, chunksize=4):
+                            ffmpeg.stdin.write(octets)
+                else:
+                    for tache in taches:
+                        ffmpeg.stdin.write(_image_brute(tache))
             finally:
                 ffmpeg.stdin.close()
                 if ffmpeg.wait() != 0:
                     raise RuntimeError("ffmpeg a échoué")
         return sortie
+
+
+_EPISODE: "Episode | None" = None
+
+
+def _image_brute(tache) -> bytes:
+    """Rendu d'une image dans un processus fils (l'épisode est hérité par fork)."""
+    i, etats, (w, h) = tache
+    image = _EPISODE.image(i, etats)
+    if (w, h) != image.size:
+        image = image.resize((w, h), Image.BILINEAR)
+    return image.tobytes()

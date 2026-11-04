@@ -189,3 +189,46 @@ def test_camera_plan_rapproche_sur_celui_qui_parle(episode):
     x, _, zoom = ep.camera(a.debut + 0.1)
     assert zoom > 1.5 and x == ep.acteurs["awa"].x
     assert ep.camera(0.0) == (ep.taille[0] / 2, ep.taille[1] / 2, 1.0)
+
+
+# --- personnages en volume (toon.py) ---
+
+def _toon():
+    from animation.toon import Toon, modele
+    return Toon(modele("fanta"))
+
+
+def test_toon_tour_complet():
+    from animation.toon import PoseToon
+    t = _toon()
+    blancs = {}
+    for angle in (0, 90, 180):
+        im = np.asarray(t.rendre(PoseToon(corps=angle), 0.35)).astype(int)
+        assert im[..., 3].sum() > 0
+        # le blanc des yeux : visible de face, plus de profil, pas du tout de dos
+        blanc = (im[..., :3].min(-1) > 225) & (im[..., 3] > 200)
+        blancs[angle] = blanc.sum()
+    assert blancs[0] > blancs[90] > blancs[180] == 0
+
+
+def test_toon_geste_et_bouche():
+    from animation.toon import PoseToon
+    t = _toon()
+    repos = np.asarray(t.rendre(PoseToon(), 0.35)).astype(int)
+    geste = np.asarray(t.rendre(PoseToon(bras_d=1.0), 0.35)).astype(int)
+    bouche = np.asarray(t.rendre(PoseToon(bouche="D"), 0.35)).astype(int)
+    assert np.abs(geste - repos).sum() > 0 and np.abs(bouche - repos).sum() > 0
+
+
+def test_episode_en_volume_tour_impose(tmp_path):
+    d = {"format": [270, 480], "fps": 10,
+         "personnages": {"fanta": {"toon": "fanta", "x": 135, "y": 470, "echelle": 0.3}},
+         "repliques": [{"qui": "fanta", "texte": "I ni sɔgɔma", "audio": "0.wav",
+                        "mouvements": [{"t": 0.0, "corps": 0}, {"t": 0.5, "corps": 360}]}]}
+    sf.write(str(tmp_path / "0.wav"), demo.voix_factice("i ni sɔgɔma a", 200.0, 16000), 16000)
+    (tmp_path / "e.json").write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    ep = Episode(tmp_path / "e.json", moteur_levres="audio")
+    etats = [ep.etat(i) for i in range(ep.n_images)]
+    angles = [e["fanta"]["corps"] for e in etats]
+    assert max(angles) > 300  # elle a fait le tour
+    assert ep.image(len(etats) // 2, etats[len(etats) // 2]).size == (270, 480)

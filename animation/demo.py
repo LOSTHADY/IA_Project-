@@ -373,3 +373,33 @@ def fond_cour(sortie: Path, taille: tuple[int, int] = (1080, 1920)) -> Path:
     image = image.filter(ImageFilter.GaussianBlur(2.5))
     image.convert("RGB").save(sortie)
     return sortie
+
+
+def episode_volume(dossier: Path) -> Path:
+    """Épisode d'essai avec Fanta et Bakary en volume : gestes, tour complet,
+    Bakary qui se retourne vers la porte. Voix factice."""
+    import copy
+    import soundfile as sf
+    dossier.mkdir(parents=True, exist_ok=True)
+    d = copy.deepcopy(EPISODE_DEMO)
+    d["personnages"] = {
+        "fanta": {"toon": "fanta", "x": 330, "y": 1790, "echelle": 0.82},
+        "bakary": {"toon": "bakary", "x": 760, "y": 1790, "echelle": 0.82},
+    }
+    qui = ["fanta", "bakary", "fanta", "bakary"]
+    for k, r in enumerate(d["repliques"]):
+        r["qui"] = qui[k]
+        r["texte"] = r["texte"].replace("Seydou", "Bakary")
+        r["audio"] = f"{r['qui']}_{k // 2 + 1}.wav"
+        r.pop("mouvements", None)
+        sf.write(str(dossier / r["audio"]),
+                 voix_factice(r["texte"], 230.0 if r["qui"] == "fanta" else 125.0, graine=k), 44100)
+    # Fanta fait un tour sur elle-même de joie ; Bakary se retourne vers la porte
+    d["repliques"][2]["mouvements"] = [{"t": 0.2, "corps": 28}, {"t": 1.6, "corps": 388}]
+    d["repliques"][3]["mouvements"] = [{"t": 0.0, "corps": -28}, {"t": 0.8, "corps": -150},
+                                       {"t": 1.8, "corps": -150}, {"t": 2.6, "corps": -28}]
+    fond_cour(dossier / "fond.png")
+    d["fond"] = {"image": "fond.png"}
+    fichier = dossier / "episode.json"
+    fichier.write_text(json.dumps(d, indent=1, ensure_ascii=False), encoding="utf-8")
+    return fichier
