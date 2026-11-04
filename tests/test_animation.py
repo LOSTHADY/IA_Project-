@@ -232,3 +232,34 @@ def test_episode_en_volume_tour_impose(tmp_path):
     angles = [e["fanta"]["corps"] for e in etats]
     assert max(angles) > 300  # elle a fait le tour
     assert ep.image(len(etats) // 2, etats[len(etats) // 2]).size == (270, 480)
+
+
+# --- personnages multi-vues (vues.py) ---
+
+@pytest.fixture(scope="module")
+def bakary_tour(tmp_path_factory):
+    from animation.vues import Tour, preparer
+    return Tour(preparer("bakary", destination=tmp_path_factory.mktemp("tour") / "bakary_tour"))
+
+
+def test_tour_cinq_vues_et_miroirs(bakary_tour):
+    from animation.vues import PoseTour
+    t = bakary_tour
+    assert set(t.vues) == {0, 45, 90, 135, 180, -45, -90, -135, -180}
+    face = np.asarray(t.rendre(PoseTour(corps=0)))
+    dos = np.asarray(t.rendre(PoseTour(corps=180)))
+    droite = np.asarray(t.rendre(PoseTour(corps=90)))
+    gauche = np.asarray(t.rendre(PoseTour(corps=-90)))
+    assert np.abs(face.astype(int) - dos).mean() > 3
+    assert np.abs(droite[:, ::-1].astype(int) - gauche).mean() < 1  # le profil gauche est le miroir
+
+
+def test_tour_bouche_clignement_tete(bakary_tour):
+    from animation.vues import PoseTour
+    t = bakary_tour
+    repos = np.asarray(t.rendre(PoseTour())).astype(int)
+    for pose in (PoseTour(bouche="D"), PoseTour(cligne=True), PoseTour(tete=40), PoseTour(corps=20)):
+        assert np.abs(np.asarray(t.rendre(pose)).astype(int) - repos).sum() > 0, pose
+    # de dos, ni bouche ni yeux : la forme de bouche ne change rien
+    assert np.array_equal(np.asarray(t.rendre(PoseTour(corps=180, bouche="D"))),
+                          np.asarray(t.rendre(PoseTour(corps=180))))

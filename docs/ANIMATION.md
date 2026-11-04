@@ -84,6 +84,58 @@ sont dessinés par ChatGPT, puis découpés automatiquement (voir plus bas).
 `python -m animation demo` crée aussi l'épisode d'essai
 `animation/episodes/fanta_bakary`.
 
+## Personnages multi-vues : le tour complet avec les vrais dessins (`animation/vues.py`)
+
+C'est la méthode de Cartoon Animator, et c'est la meilleure : les
+personnages restent les dessins de ChatGPT. Il faut une **planche
+turnaround** par personnage : 5 vues en pied sur une ligne (face,
+trois-quarts, profil, trois-quarts dos, dos), fond blanc. Le prompt est plus
+bas (prompt 6). Les angles négatifs sont les mêmes vues en miroir.
+
+À chaque image, le moteur prend la vue dessinée la plus proche de l'angle
+voulu, puis la déforme du petit écart qui reste. La silhouette reste en
+place, et les détails (encolure, plis, visage) glissent vers le côté où le
+personnage se tourne. On change de dessin à mi-chemin, d'un coup. La tête,
+découpée au cou, tourne indépendamment du corps, hoche et s'incline.
+
+La bouche du dessin est effacée (la peau est retouchée à sa place) et
+remplacée par les 9 formes de la planche des bouches, à l'échelle de chaque
+vue et écrasées de trois-quarts. De profil, on garde les lèvres du dessin
+et on n'y dessine que l'ouverture. Les yeux clignent : la peau est retouchée
+sur l'œil, puis on trace une paupière.
+
+```bash
+python -m animation tour fanta     # animation/brut/fanta/tour.webp -> animation/personnages/fanta_tour
+python -m animation demo           # crée aussi l'épisode d'essai animation/episodes/tour
+python -m animation rendre animation/episodes/tour/episode.json tour.mp4
+```
+
+Dans un épisode : `"fanta": {"tour": "../../personnages/fanta_tour", "x": 320,
+"y": 1800, "echelle": 1.4}`. Les mouvements (`corps` pour tourner, `x` pour
+se déplacer, `qui`) sont les mêmes que pour les personnages en volume. Le
+rendu est rapide : 18 s de vidéo en moins d'une minute.
+
+**Pour un nouveau personnage**, il faut noter dans `vues.REPERES` la boîte de
+la bouche et celle de chaque œil sur les trois premières vues, en pixels de
+la planche. C'est quelques minutes avec une grille.
+
+**Limite** : la planche de ChatGPT est petite (environ 800 px de haut pour le
+personnage entier). Les gros plans sont donc un peu flous. Une planche plus
+grande, ou une image par vue, donnerait des gros plans nets.
+
+**Prompt 6 — la planche turnaround** (joindre l'image de face du personnage) :
+
+> Planche de personnage (character turnaround) de CE personnage, exactement
+> le même (même visage, mêmes vêtements, mêmes couleurs, même style plat :
+> contours brun foncé épais, aplats, aucune ombre). Le personnage EN PIED, de
+> la tête aux pieds, debout, bras légèrement écartés du corps, expression
+> neutre, bouche fermée. 5 vues alignées sur une seule ligne, de gauche à
+> droite, toutes à la même taille et à la même hauteur : 1. de face ; 2. de
+> trois-quarts (tourné vers la droite de l'image) ; 3. de profil (regardant
+> vers la droite) ; 4. de trois-quarts dos ; 5. de dos. Bien espacées, sans
+> se toucher. Fond uni blanc. Pas de texte, pas d'ombre au sol. Format
+> paysage large.
+
 ## Personnages en volume : le tour complet (`animation/toon.py`)
 
 Un dessin de face ne montre pas le dos d'une tête. Pour qu'un personnage

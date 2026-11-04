@@ -403,3 +403,33 @@ def episode_volume(dossier: Path) -> Path:
     fichier = dossier / "episode.json"
     fichier.write_text(json.dumps(d, indent=1, ensure_ascii=False), encoding="utf-8")
     return fichier
+
+
+def episode_tour(dossier: Path) -> Path:
+    """Épisode d'essai avec les vrais dessins multi-vues de Fanta et Bakary :
+    Fanta fait un tour sur elle-même, Bakary se retourne vers la porte."""
+    import copy
+    import soundfile as sf
+    dossier.mkdir(parents=True, exist_ok=True)
+    d = copy.deepcopy(EPISODE_DEMO)
+    d["personnages"] = {
+        "fanta": {"tour": "../../personnages/fanta_tour", "x": 320, "y": 1800, "echelle": 1.4},
+        "bakary": {"tour": "../../personnages/bakary_tour", "x": 770, "y": 1800, "echelle": 1.4},
+    }
+    d["zoom_serre"] = 1.5
+    qui = ["fanta", "bakary", "fanta", "bakary"]
+    for k, r in enumerate(d["repliques"]):
+        r["qui"] = qui[k]
+        r["texte"] = r["texte"].replace("Seydou", "Bakary")
+        r["audio"] = f"{r['qui']}_{k // 2 + 1}.wav"
+        r.pop("mouvements", None)
+        sf.write(str(dossier / r["audio"]),
+                 voix_factice(r["texte"], 230.0 if r["qui"] == "fanta" else 125.0, graine=k), 44100)
+    d["repliques"][2]["mouvements"] = [{"t": 0.2, "corps": 28}, {"t": 1.8, "corps": 388}]
+    d["repliques"][3]["mouvements"] = [{"t": 0.0, "corps": -28}, {"t": 0.9, "corps": -150},
+                                       {"t": 1.9, "corps": -150}, {"t": 2.8, "corps": -28}]
+    fond_cour(dossier / "fond.png")
+    d["fond"] = {"image": "fond.png"}
+    fichier = dossier / "episode.json"
+    fichier.write_text(json.dumps(d, indent=1, ensure_ascii=False), encoding="utf-8")
+    return fichier

@@ -6,6 +6,7 @@
     python -m animation rendre episode.json essai.mp4 --apercu   # moitié de taille, plus rapide
     python -m animation image episode.json 45 image.png          # une seule image, pour vérifier
     python -m animation decouper animation/brut/fanta animation/personnages/fanta
+    python -m animation tour fanta     # planche turnaround -> personnage multi-vues
 """
 
 from __future__ import annotations
@@ -62,6 +63,8 @@ def main(argv: list[str] | None = None) -> None:
     dc = sous.add_parser("decouper", help="personnage dessiné d'une pièce -> calques (reperes.json)")
     dc.add_argument("source")
     dc.add_argument("destination")
+    tr = sous.add_parser("tour", help="planche turnaround (5 vues) -> personnage multi-vues")
+    tr.add_argument("nom")
     im = sous.add_parser("image", help="une image de l'épisode, en PNG")
     im.add_argument("episode")
     im.add_argument("numero", type=int)
@@ -75,6 +78,8 @@ def main(argv: list[str] | None = None) -> None:
         if all((RACINE / "personnages" / n / "personnage.json").exists() for n in ("fanta", "bakary")):
             print(demo.episode_demo(RACINE / "episodes" / "fanta_bakary", ("fanta", "bakary"), 0.72))
             print(demo.episode_volume(RACINE / "episodes" / "volume"))
+        if all((RACINE / "personnages" / f"{n}_tour" / "tour.json").exists() for n in ("fanta", "bakary")):
+            print(demo.episode_tour(RACINE / "episodes" / "tour"))
     elif a.commande == "planche":
         print(planche(a.dossier, a.sortie))
     elif a.commande == "rendre":
@@ -85,6 +90,9 @@ def main(argv: list[str] | None = None) -> None:
     elif a.commande == "decouper":
         from .decoupe import decouper
         print(decouper(a.source, a.destination))
+    elif a.commande == "tour":
+        from .vues import preparer
+        print(preparer(a.nom))
     elif a.commande == "image":
         ep = Episode(a.episode)
         for i in range(a.numero + 1):  # dans l'ordre : la tête est lissée d'image en image

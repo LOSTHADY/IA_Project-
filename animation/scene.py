@@ -48,6 +48,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import levres
 from .personnage import Personnage, Pose, charger
 from . import toon as _toon
+from . import vues as _vues
 
 SR = 44100
 POLICES = (
@@ -95,11 +96,14 @@ class Acteur:
 
     @property
     def volume(self) -> bool:
-        return isinstance(self.personnage, _toon.Toon)
+        """Personnage qui peut tourner sur lui-même (en volume ou multi-vues)."""
+        return isinstance(self.personnage, (_toon.Toon, _vues.Tour))
 
     @property
     def tete_y(self) -> float:
         """Hauteur du centre de la tête, dans la scène."""
+        if isinstance(self.personnage, _vues.Tour):
+            return self.y - self.personnage.tete_hauteur * self.echelle
         if self.volume:
             return self.y + self.personnage.m.tete_c[1] * self.echelle
         p = self.personnage
@@ -182,7 +186,9 @@ class Episode:
         self.acteurs: dict[str, Acteur] = {}
         for i, (nom, a) in enumerate(d["personnages"].items()):
             r = random.Random(f"{nom}-{i}")
-            if "toon" in a:  # personnage en volume (toon.py) : tour complet possible
+            if "tour" in a:  # personnage multi-vues (vues.py) : les vrais dessins, sur 360°
+                personnage = _vues.Tour(racine / a["tour"])
+            elif "toon" in a:  # personnage en volume (toon.py) : tour complet possible
                 personnage = _toon.Toon(_toon.modele(a["toon"]))
             else:
                 personnage = charger(racine / a["dossier"])
@@ -395,6 +401,17 @@ class Episode:
             pose = e["pose"]
             s = acteur.echelle * zoom
             ex, ey = (e["x"] - cx) * zoom + w / 2, (acteur.y - cy) * zoom + h / 2
+            if isinstance(acteur.personnage, _vues.Tour):
+                pt = _vues.PoseTour(
+                    corps=e["corps"], tete=pose.lacet * 30, tangage=pose.tangage * 10,
+                    roulis=pose.roulis, bouche=pose.bouche, cligne=pose.cligne,
+                    respiration=pose.respiration, balance=e["balance"] * 0.5)
+                ombre = self._ombre.resize((max(2, round(300 * s)), max(2, round(60 * s))), Image.BILINEAR)
+                image.alpha_composite(ombre, (round(ex - ombre.width / 2), round(ey - ombre.height * 0.6)))
+                rendu = acteur.personnage.rendre(pt, s)
+                ax, ay = acteur.personnage.taille[0] / 2 * s, acteur.personnage.pieds_y * s
+                image.alpha_composite(rendu, (round(ex - ax), round(ey - ay)))
+                continue
             if acteur.volume:
                 pt = _toon.PoseToon(
                     corps=e["corps"], tete=pose.lacet * 32, tangage=pose.tangage * 12,
