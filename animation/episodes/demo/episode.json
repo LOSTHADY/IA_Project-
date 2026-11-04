@@ -1,0 +1,61 @@
+{
+ "format": [
+  1080,
+  1920
+ ],
+ "fps": 30,
+ "fond": {
+  "haut": "#fbe3b6",
+  "bas": "#e59a5c"
+ },
+ "personnages": {
+  "awa": {
+   "dossier": "../../personnages/awa",
+   "x": 300,
+   "y": 1820,
+   "echelle": 0.8
+  },
+  "seydou": {
+   "dossier": "../../personnages/seydou",
+   "x": 780,
+   "y": 1820,
+   "echelle": 0.8
+  }
+ },
+ "repliques": [
+  {
+   "qui": "awa",
+   "texte": "I ni sɔgɔma, Seydou !",
+   "audio": "awa_1.wav"
+  },
+  {
+   "qui": "seydou",
+   "texte": "Nba, i ni sɔgɔma. I ka kɛnɛ wa ?",
+   "audio": "seydou_1.wav"
+  },
+  {
+   "qui": "awa",
+   "texte": "Tɔɔrɔ si tɛ. Somɔgɔw ka kɛnɛ wa ?",
+   "audio": "awa_2.wav",
+   "mouvements": [
+    {
+     "t": 0.0,
+     "lacet": -0.7
+    },
+    {
+     "t": 0.9,
+     "lacet": -0.7
+    },
+    {
+     "t": 1.6,
+     "lacet": 0.4
+    }
+   ]
+  },
+  {
+   "qui": "seydou",
+   "texte": "U ka kɛnɛ kosɛbɛ, Ala ka tanu.",
+   "audio": "seydou_2.wav"
+  }
+ ]
+}

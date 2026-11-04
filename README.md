@@ -102,6 +102,20 @@ une personne âgée, en autant de versions qu'on veut, **lire** des phrases bamb
 l'audio, la comparaison centrale, sur de la parole réelle. Mode d'emploi :
 [`docs/ATELIER.md`](docs/ATELIER.md).
 
+## Animation participative (collecte)
+
+Des dessins animés courts pour TikTok, où les personnages parlent avec la
+voix des participants. Chaque réplique doublée est un enregistrement au texte
+bambara exact. **L'image suit la voix** : chacun enregistre à son rythme, et
+le programme fait sa vidéo (bouches synchronisées, têtes qui tournent, jeu
+automatique). Moteur, prompts pour les dessins et suite du chantier :
+[`docs/ANIMATION.md`](docs/ANIMATION.md).
+
+```bash
+python -m animation demo
+python -m animation rendre animation/episodes/demo/episode.json demo.mp4
+```
+
 ## Références zero-shot (phase 1)
 
 [![Ouvrir dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/LOSTHADY/IA_Project-/blob/claude/chat-ia-bambara-dho8oa/notebooks/phase1_zero_shot.ipynb)
@@ -265,6 +279,7 @@ bambara_voice/     pipeline d'inférence
 eval/              métriques, jeu de test, références zero-shot, rapports comparatifs
 scripts/           fine-tuning Colab, jeu de test, conversion CPU
 app/               démo Gradio, application de collecte, atelier de données
+animation/         marionnettes 2D doublées par les participants (docs/ANIMATION.md)
 notebooks/         notebooks Colab (phases 1 et 3-4, atelier de données, démo seule : assistant.ipynb, V4 : v4_test.ipynb, progrès : progres.ipynb, diagnostic CPU : diagnostic.ipynb, voix : voix.ipynb)
 docs/METHODE.md    partis pris méthodologiques
 docs/COLLECTE.md   protocole de collecte, formulaire de consentement

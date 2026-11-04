@@ -51,3 +51,7 @@ outputs/
 # Dossiers de travail de la recherche (copiés dans docs/RECHERCHE.md et docs/recherche-notes/)
 research_notes/
 reports/
+
+# Vidéos rendues par animation/
+*.mp4
+animation/episodes/demo/   # créé par « python -m animation demo »

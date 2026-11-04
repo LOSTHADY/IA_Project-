@@ -1,0 +1,122 @@
+{
+ "nom": "seydou",
+ "taille": [
+  800,
+  1100
+ ],
+ "pivot_cou": [
+  400,
+  600
+ ],
+ "parties": [
+  {
+   "nom": "corps",
+   "images": {
+    "defaut": "corps.png"
+   },
+   "position": [
+    400,
+    840
+   ]
+  },
+  {
+   "nom": "oreilles",
+   "images": {
+    "defaut": "oreilles.png"
+   },
+   "position": [
+    400,
+    420
+   ]
+  },
+  {
+   "nom": "tete",
+   "images": {
+    "defaut": "tete.png"
+   },
+   "position": [
+    400,
+    400
+   ]
+  },
+  {
+   "nom": "joues",
+   "images": {
+    "defaut": "joues.png"
+   },
+   "position": [
+    400,
+    495
+   ]
+  },
+  {
+   "nom": "yeux",
+   "images": {
+    "ouverts": "yeux_ouverts.png",
+    "fermes": "yeux_fermes.png"
+   },
+   "position": [
+    400,
+    420
+   ]
+  },
+  {
+   "nom": "pupilles",
+   "images": {
+    "defaut": "pupilles.png"
+   },
+   "position": [
+    400,
+    424
+   ]
+  },
+  {
+   "nom": "sourcils",
+   "images": {
+    "defaut": "sourcils.png"
+   },
+   "position": [
+    400,
+    352
+   ]
+  },
+  {
+   "nom": "nez",
+   "images": {
+    "defaut": "nez.png"
+   },
+   "position": [
+    400,
+    485
+   ]
+  },
+  {
+   "nom": "bouche",
+   "images": {
+    "X": "bouche_X.png",
+    "A": "bouche_A.png",
+    "B": "bouche_B.png",
+    "C": "bouche_C.png",
+    "D": "bouche_D.png",
+    "E": "bouche_E.png",
+    "F": "bouche_F.png",
+    "G": "bouche_G.png",
+    "H": "bouche_H.png"
+   },
+   "position": [
+    400,
+    560
+   ]
+  },
+  {
+   "nom": "coiffe",
+   "images": {
+    "defaut": "coiffe.png"
+   },
+   "position": [
+    400,
+    220
+   ]
+  }
+ ]
+}
