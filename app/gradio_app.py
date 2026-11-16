@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -44,10 +45,13 @@ def build_interface(pipeline: VoicePipeline):
             {"role": "assistant", "content": trace.reply_bm},
         ]
 
-        out_path = None
+        audio_bytes = None
         if speech is not None and len(speech.audio):
-            out_path = str(Path(gr.utils.abspath(".")) / "reponse.wav")
-            speech.save(out_path)
+            # Gradio reçoit le WAV avant la suppression du fichier temporaire.
+            with TemporaryDirectory(prefix="bambara-voice-") as directory:
+                path = Path(directory) / "reponse.wav"
+                speech.save(path)
+                audio_bytes = path.read_bytes()
 
         # Deux espaces en fin de ligne : saut de ligne Markdown, sans quoi
         # tout le panneau s'affiche en un seul paragraphe.
@@ -64,7 +68,7 @@ def build_interface(pipeline: VoicePipeline):
             *[f"- {k} : {v:.2f}" for k, v in trace.timings.items()],
             f"- **total** : {trace.total_seconds:.2f} (RTF {trace.rtf:.2f})",
         ])
-        return history, out_path, details
+        return history, audio_bytes, details
 
     with gr.Blocks(title="Assistant vocal bambara") as demo:
         gr.Markdown(
