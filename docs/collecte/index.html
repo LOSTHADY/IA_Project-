@@ -28,14 +28,13 @@ a{color:var(--green)}footer{padding-bottom:2rem;font-size:.9rem}.tag{display:inl
 
   <section class="card" id="welcome">
     <h2>Participer à la collecte</h2>
-    <p>Choisissez un endroit calme. Votre voix est enregistrée sous un code. L’équipe écoute les prises pour évaluer l’assistant vocal en bambara.</p>
-    <p id="contact"></p>
     <form id="join">
-      <label>Code d’invitation <input id="invite" required autocomplete="off" spellcheck="false"></label>
-      <label><input id="research" type="checkbox" required><span>J’accepte l’enregistrement de ma voix et son utilisation pour cette recherche.</span></label>
+      <label>Prénom ou pseudo <input id="participant-name" required maxlength="60" autocomplete="nickname"></label>
+      <p id="research-notice">Votre voix est enregistrée pour évaluer l’assistant vocal en bambara. L’équipe de recherche peut écouter les prises et voir votre prénom ou pseudo.</p>
       <label id="public-label" hidden><input id="public-ok" type="checkbox"><span id="public-notice"></span></label>
-      <button id="start" type="submit">Commencer</button>
+      <button id="start" type="submit" aria-describedby="research-notice">J’accepte et je commence</button>
     </form>
+    <p id="contact"></p>
     <div class="row"><button id="demo" class="secondary" type="button">Essayer sans envoyer</button></div>
   </section>
 
@@ -163,6 +162,7 @@ let mic = null;
 let timer = null;
 let openingMic = false;
 let demoMode = false;
+let invitation = null;
 
 function clearTake() {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -210,14 +210,15 @@ function showSession(data, demo) {
 byId("join").onsubmit = async (event) => {
   event.preventDefault();
   if (!ready) return status("La collecte en ligne est en cours de configuration. Le mode essai est disponible.", true);
-  const invitation = byId("invite").value.trim();
-  if (!uuidPattern.test(invitation)) return status("Vérifiez le code reçu dans votre invitation.", true);
+  if (byId("start").disabled) return;
+  const display_name = byId("participant-name").value.trim();
+  if (!display_name) return status("Indiquez un prénom ou un pseudo.", true);
   byId("start").disabled = true;
   status("Ouverture de votre session…");
   try {
     const token = await tokenFor(participantKey, true);
-    const data = await rpc("start_readings", {invitation,accept_research:byId("research").checked,
-      accept_public:!byId("public-label").hidden && byId("public-ok").checked,version:"lecture-v1"}, token);
+    const data = await rpc("open_readings", {display_name, invitation, accept_research:true,
+      accept_public:!byId("public-label").hidden && byId("public-ok").checked}, token);
     showSession(data, false);
     status("");
   } catch (error) { status(error.message, true); }
@@ -397,7 +398,8 @@ function queueCard(row, token) {
   const card = addElement(byId("queue"),"article");
   card.className = "card";
   addElement(card,"h2",row.sentence_bm);
-  addElement(card,"p",row.speaker + " · " + (row.verdict === "approved" ? "Validée" :
+  const participant = row.participant_name ? row.participant_name + " · " + row.speaker : row.speaker;
+  addElement(card,"p",participant + " · " + (row.verdict === "approved" ? "Validée" :
     row.verdict === "rejected" ? "Refusée" : row.transcribed ? "À valider" : "À transcrire"));
   const listen = addElement(card,"button","Charger l’audio");
   listen.className = "secondary";
@@ -653,13 +655,23 @@ async function init() {
     }
     return;
   }
-  if (fragment.has("invitation")) byId("invite").value = fragment.get("invitation");
   if (ready) {
+    byId("demo").hidden = true;
     const contact = addElement(byId("contact"),"a","Contacter l’équipe ou demander un retrait");
     contact.href = "mailto:" + config.contact;
     if (config.publicNotice) {
       byId("public-label").hidden = false;
       byId("public-notice").textContent = config.publicNotice;
+    }
+    const invitationCode = fragment.get("invitation");
+    if (uuidPattern.test(invitationCode ?? "")) invitation = invitationCode;
+    if (!invitation && stored(participantKey)) {
+      byId("start").disabled = true;
+      try {
+        const token = await tokenFor(participantKey);
+        const data = await rpc("open_readings", {}, token);
+        if (data) showSession(data, false);
+      } finally { byId("start").disabled = false; }
     }
   } else {
     byId("join").hidden = true;
