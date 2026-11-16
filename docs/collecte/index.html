@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Collecte vocale · IA Bambara</title>
+<style>
+:root{color-scheme:light;--ink:#172c25;--green:#075b45;--muted:#51645b;--paper:#fffdf8;--line:#cbdad1;--pale:#e9f3ed;--accent:#f4cb71}
+*{box-sizing:border-box}body{margin:0;background:#f1f3e9;color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
+header,main,footer{margin:auto;max-width:43rem;padding:0 1.25rem}header{display:flex;align-items:center;gap:.75rem;padding-top:1.5rem;font-weight:750}
+.mark{display:inline-grid;place-items:center;width:2.4rem;height:2.4rem;border-radius:.75rem;background:var(--green);color:white}
+main{padding-block:1.65rem}h1,h2,p{margin:0 0 .85rem}h1{font-size:clamp(1.8rem,6vw,2.65rem);line-height:1.1;letter-spacing:-.045em}
+h2{font-size:1.25rem;line-height:1.25}p{color:var(--muted)}.card{padding:clamp(1rem,4vw,1.65rem);background:var(--paper);border:1px solid var(--line);border-radius:1.15rem;margin-bottom:1rem}
+label{display:block;margin:.85rem 0}label:has(input[type=checkbox]){display:flex;align-items:baseline;gap:.65rem}
+input,textarea{font:inherit;max-width:100%;accent-color:var(--green)}input:not([type=checkbox]),textarea{display:block;width:100%;margin:.25rem 0 0;padding:.6rem;border:1px solid #8b9e91;border-radius:.5rem;background:white;color:var(--ink)}
+textarea{resize:vertical;min-height:4rem}button{font:inherit;font-weight:700;min-height:2.75rem;border-radius:.65rem;padding:.55rem .9rem;cursor:pointer;border:1px solid var(--green);background:var(--green);color:white}
+button.secondary{background:transparent;color:var(--green)}button:disabled{opacity:.55;cursor:default}button:focus-visible,a:focus-visible{outline:3px solid #cd8610;outline-offset:3px}
+.row{display:flex;gap:.55rem;flex-wrap:wrap;align-items:center;margin:.75rem 0}.phrase{border-left:.3rem solid var(--green);padding:1rem;background:var(--pale);border-radius:.35rem;font-size:clamp(1.35rem,5.6vw,2rem);font-weight:700;line-height:1.3;margin:.9rem 0 1.1rem;overflow-wrap:anywhere}
+.status{min-height:1.65rem;font-weight:650;color:var(--green);overflow-wrap:anywhere}.status[data-error=true]{color:#a1261c}progress,audio{width:100%}progress{accent-color:var(--green)}
+a{color:var(--green)}footer{padding-bottom:2rem;font-size:.9rem}.tag{display:inline-block;background:var(--accent);color:var(--ink);border-radius:.4rem;padding:.15rem .5rem;font-weight:700;font-size:.85rem}
+[hidden]{display:none!important}
+</style>
+<header><span class="mark" aria-hidden="true">B</span><span>IA Bambara</span></header>
+<main>
+  <h1 id="heading">Collecte vocale</h1>
+  <p id="intro">Lisez les phrases affichées en bambara, à votre rythme.</p>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+
+  <section class="card" id="welcome">
+    <h2>Participer à la collecte</h2>
+    <p>Choisissez un endroit calme. Votre voix est enregistrée sous un code. L’équipe écoute les prises pour évaluer l’assistant vocal en bambara.</p>
+    <p id="contact"></p>
+    <form id="join">
+      <label>Code d’invitation <input id="invite" required autocomplete="off" spellcheck="false"></label>
+      <label><input id="research" type="checkbox" required><span>J’accepte l’enregistrement de ma voix et son utilisation pour cette recherche.</span></label>
+      <label id="public-label" hidden><input id="public-ok" type="checkbox"><span id="public-notice"></span></label>
+      <button id="start" type="submit">Commencer</button>
+    </form>
+    <div class="row"><button id="demo" class="secondary" type="button">Essayer sans envoyer</button></div>
+  </section>
+
+  <section class="card" id="reading" hidden>
+    <span id="demo-badge" class="tag" hidden>Mode essai</span>
+    <div class="row"><strong id="progress-label"></strong><span id="timer" aria-hidden="true"></span></div>
+    <progress id="progress" aria-label="Lectures envoyées"></progress>
+    <div id="phrase" class="phrase" lang="bm" tabindex="-1"></div>
+    <p>Lisez la phrase telle qu’elle est écrite. Parlez naturellement et arrêtez l’enregistrement à la fin.</p>
+    <div class="row">
+      <button id="record">Enregistrer</button>
+      <button id="stop" hidden>Arrêter</button>
+    </div>
+    <audio id="preview" controls hidden aria-label="Réécouter la prise"></audio>
+    <div class="row" id="take-actions" hidden>
+      <button id="send">Envoyer la lecture</button>
+      <button id="redo" class="secondary">Recommencer la prise</button>
+    </div>
+    <p id="speaker"></p>
+  </section>
+
+  <section class="card" id="finished" hidden>
+    <h2 id="finish-title">Merci pour votre participation</h2>
+    <p id="finish-text"></p>
+    <button class="secondary" id="back">Retour à l’accueil</button>
+  </section>
+
+  <section class="card" id="team" hidden>
+    <h2>Espace équipe</h2>
+    <form id="team-login">
+      <label>Adresse e-mail de l’équipe <input id="email" type="email" required autocomplete="email"></label>
+      <button type="submit">Recevoir un lien de connexion</button>
+    </form>
+    <div id="team-actions" hidden>
+      <div class="row">
+        <button id="load-queue">Charger les lectures</button>
+        <button class="secondary" id="export">Exporter les lectures validées</button>
+        <button class="secondary" id="logout">Se déconnecter</button>
+      </div>
+      <label id="export-public-label"><input type="checkbox" id="public-only"> Limiter l’export aux accords de diffusion publique</label>
+    </div>
+    <div id="queue"></div>
+  </section>
+</main>
+<footer><a href="?equipe=1" id="team-link">Accès équipe</a><a href="./" id="participant-link" hidden>Retour à la collecte</a></footer>
+
+<script src="./config.js"></script>
+<script>
+"use strict";
+const config = window.BAMBARA_COLLECTION || {};
+const byId = (id) => document.getElementById(id);
+const modeTeam = new URLSearchParams(location.search).has("equipe");
+const maxMs = 20000;
+const sampleRate = 16000;
+const ready = /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(config.url || "") &&
+  typeof config.key === "string" && config.key.length > 20 &&
+  typeof config.contact === "string" && config.contact.includes("@");
+const participantKey = "bambara-reading-participant";
+const teamKey = "bambara-reading-team";
+const uuidPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+
+function status(message, error = false) {
+  byId("status").textContent = message;
+  byId("status").dataset.error = String(error);
+}
+
+async function api(path, { body, method = "GET", token, type = "application/json" } = {}) {
+  const headers = { apikey: config.key };
+  if (token) headers.Authorization = "Bearer " + token;
+  if (body !== undefined) headers["Content-Type"] = type;
+  const response = await fetch(config.url + path, {
+    method, headers, body: type === "application/json" && body !== undefined ? JSON.stringify(body) : body,
+    cache: "no-store", signal: AbortSignal.timeout(25000)
+  });
+  if (!response.ok) {
+    const details = await response.json().catch(() => ({}));
+    if (details.code === "22023" || details.code === "42501") throw new Error(details.message);
+    throw new Error("Connexion au service impossible (" + response.status + "). Réessayez.");
+  }
+  return response;
+}
+
+function stored(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+}
+
+function saveSession(key, session) {
+  const expires = Number(session.expires_at) || Math.floor(Date.now() / 1000) + Number(session.expires_in || 3600);
+  localStorage.setItem(key, JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token, expires_at: expires }));
+  return session.access_token;
+}
+
+async function tokenFor(key, create = false) {
+  const session = stored(key);
+  if (session?.access_token && session.expires_at > Date.now() / 1000 + 45) return session.access_token;
+  if (session?.refresh_token) {
+    const response = await api("/auth/v1/token?grant_type=refresh_token", {method:"POST", body:{refresh_token:session.refresh_token}});
+    return saveSession(key, await response.json());
+  }
+  if (!create) throw new Error("Reconnectez-vous pour continuer.");
+  const response = await api("/auth/v1/signup", {method:"POST",body:{}});
+  return saveSession(key, await response.json());
+}
+
+async function rpc(name, args, token) {
+  const res = await api("/rest/v1/rpc/" + name, {method:"POST",body:args,token});
+  return res.status === 204 ? null : res.json();
+}
+
+let session = null;
+let current = null;
+let wav = null;
+let previewUrl = "";
+let recorder = null;
+let mic = null;
+let timer = null;
+let openingMic = false;
+let demoMode = false;
+
+function clearTake() {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = "";
+  wav = null;
+  byId("preview").removeAttribute("src");
+  byId("preview").load();
+  byId("preview").hidden = true;
+  byId("take-actions").hidden = true;
+  byId("timer").textContent = "";
+}
+
+function showNext() {
+  clearTake();
+  const done = session.prompts.filter((item) => item.done).length;
+  current = session.prompts.find((item) => !item.done);
+  byId("reading").hidden = !current;
+  byId("finished").hidden = Boolean(current);
+  if (!current) {
+    byId("finish-title").textContent = demoMode ? "Essai terminé" : "Merci pour votre participation";
+    byId("finish-text").textContent = demoMode
+      ? "Votre prise a été traitée uniquement sur cet appareil."
+      : done + " lecture(s) reçue(s). Votre code de participation est " + session.speaker + ".";
+    return;
+  }
+  byId("progress").max = session.prompts.length;
+  byId("progress").value = done;
+  byId("progress-label").textContent = "Lecture " + (done + 1) + " sur " + session.prompts.length;
+  byId("phrase").textContent = current.text;
+  byId("phrase").focus();
+  byId("record").hidden = false;
+  byId("record").disabled = false;
+  byId("speaker").textContent = demoMode ? "" : "Votre code : " + session.speaker;
+}
+
+function showSession(data, demo) {
+  demoMode = demo;
+  session = data;
+  byId("welcome").hidden = true;
+  byId("demo-badge").hidden = !demo;
+  byId("send").textContent = demo ? "Terminer l’essai" : "Envoyer la lecture";
+  showNext();
+}
+
+byId("join").onsubmit = async (event) => {
+  event.preventDefault();
+  if (!ready) return status("La collecte en ligne est en cours de configuration. Le mode essai est disponible.", true);
+  const invitation = byId("invite").value.trim();
+  if (!uuidPattern.test(invitation)) return status("Vérifiez le code reçu dans votre invitation.", true);
+  byId("start").disabled = true;
+  status("Ouverture de votre session…");
+  try {
+    const token = await tokenFor(participantKey, true);
+    const data = await rpc("start_readings", {invitation,accept_research:byId("research").checked,
+      accept_public:!byId("public-label").hidden && byId("public-ok").checked,version:"lecture-v1"}, token);
+    showSession(data, false);
+    status("");
+  } catch (error) { status(error.message, true); }
+  finally { byId("start").disabled = false; }
+};
+
+byId("demo").onclick = () => {
+  status("L’essai se déroule sur cet appareil.");
+  showSession({prompts:[{id:0,text:"I ni sɔgɔma.",done:false}]}, true);
+};
+
+function releaseMic() {
+  clearInterval(timer);
+  mic?.getTracks().forEach((track) => track.stop());
+  mic = null;
+  recorder = null;
+  byId("stop").hidden = true;
+}
+
+function encodeWave(samples) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const word = (start, text) => [...text].forEach((character, offset) => view.setUint8(start + offset, character.charCodeAt(0)));
+  word(0,"RIFF");view.setUint32(4,buffer.byteLength-8,true);word(8,"WAVE");word(12,"fmt ");
+  view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);
+  view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*2,true);
+  view.setUint16(32,2,true);view.setUint16(34,16,true);word(36,"data");view.setUint32(40,samples.length*2,true);
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    peak = Math.max(peak, Math.abs(sample));
+    view.setInt16(44+i*2, Math.round(sample*(sample < 0 ? 32768 : 32767)), true);
+  }
+  if (peak < 0.015) throw new Error("La prise est trop faible. Rapprochez-vous du micro et recommencez.");
+  return {blob:new Blob([buffer],{type:"audio/wav"}), duration:Math.round(samples.length/sampleRate*1000)};
+}
+
+async function prepareAudio(chunks, mimeType) {
+  const source = new Blob(chunks, {type:mimeType});
+  const context = new AudioContext();
+  try {
+    const decoded = await context.decodeAudioData(await source.arrayBuffer());
+    if (decoded.duration < .5) throw new Error("La prise est trop courte. Enregistrez la phrase en entier.");
+    const frames = Math.min(sampleRate * maxMs / 1000, Math.floor(decoded.duration * sampleRate));
+    const output = new OfflineAudioContext(1, frames, sampleRate);
+    const node = output.createBufferSource();
+    node.buffer = decoded;
+    node.connect(output.destination);
+    node.start();
+    const rendered = await output.startRendering();
+    return encodeWave(rendered.getChannelData(0));
+  } finally { await context.close(); }
+}
+
+byId("record").onclick = async () => {
+  if (openingMic || recorder || !current) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return status("Ouvrez cette page en HTTPS dans un navigateur avec accès au micro.", true);
+  openingMic = true;
+  byId("record").disabled = true;
+  status("Ouverture du microphone…");
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1}});
+    const preferred = ["audio/webm;codecs=opus","audio/mp4","audio/ogg;codecs=opus"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    recorder = preferred ? new MediaRecorder(mic,{mimeType:preferred}) : new MediaRecorder(mic);
+    const chunks = [];
+    const active = recorder;
+    let failed = false;
+    active.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    active.onerror = () => {
+      failed = true;
+      releaseMic();
+      byId("record").hidden = false;
+      byId("record").disabled = false;
+      status("Enregistrement interrompu. Réessayez.", true);
+    };
+    active.onstop = async () => {
+      if (failed) return;
+      releaseMic();
+      status("Préparation de la réécoute…");
+      try {
+        wav = await prepareAudio(chunks, active.mimeType || chunks[0]?.type || "");
+        previewUrl = URL.createObjectURL(wav.blob);
+        byId("preview").src = previewUrl;
+        byId("preview").hidden = false;
+        byId("take-actions").hidden = false;
+        status("Écoutez votre prise avant de l’envoyer.");
+      } catch (error) {
+        byId("record").hidden = false;
+        byId("record").disabled = false;
+        status(error.message || "Audio illisible. Recommencez.", true);
+      }
+    };
+    active.start();
+    byId("record").hidden = true;
+    byId("stop").hidden = false;
+    const start = performance.now();
+    byId("timer").textContent = "0 / 20 s";
+    timer = setInterval(() => {
+      const elapsed = performance.now() - start;
+      byId("timer").textContent = Math.min(20,Math.floor(elapsed/1000)) + " / 20 s";
+      if (elapsed >= maxMs && active.state === "recording") active.stop();
+    }, 200);
+    status("Enregistrement en cours.");
+  } catch {
+    releaseMic();
+    byId("record").disabled = false;
+    status("Impossible d’ouvrir le micro. Vérifiez l’autorisation et réessayez.", true);
+  } finally { openingMic = false; }
+};
+
+byId("stop").onclick = () => { if (recorder?.state === "recording") recorder.stop(); };
+byId("redo").onclick = () => {
+  clearTake();
+  byId("record").hidden = false;
+  byId("record").disabled = false;
+  byId("record").focus();
+  status("");
+};
+
+byId("send").onclick = async () => {
+  if (!wav || !current) return;
+  if (demoMode) {
+    current.done = true;
+    status("");
+    return showNext();
+  }
+  byId("send").disabled = byId("redo").disabled = true;
+  status("Envoi de la lecture…");
+  try {
+    const token = await tokenFor(participantKey);
+    const clip = await rpc("reserve_reading", {prompt_id:current.id,milliseconds:wav.duration}, token);
+    if (!clip.done) {
+      let uploadError;
+      try {
+        await api("/storage/v1/object/bambara-readings/" + clip.id + ".wav",
+          {method:"POST",body:wav.blob,token,type:"audio/wav"});
+      } catch (error) { uploadError = error; }
+      if (!await rpc("finish_reading",{clip_id:clip.id},token)) {
+        throw uploadError || new Error("L’envoi reste à confirmer.");
+      }
+    }
+    current.done = true;
+    status("Lecture reçue.");
+    showNext();
+  } catch (error) { status(error.message + " La prise reste disponible sur cette page.", true); }
+  finally { byId("send").disabled = byId("redo").disabled = false; }
+};
+
+byId("back").onclick = () => {
+  clearTake();
+  byId("finished").hidden = true;
+  byId("welcome").hidden = false;
+  status("");
+};
+
+const queueUrls = new Set();
+
+async function teamAccess() {
+  const access = await tokenFor(teamKey);
+  if (!await rpc("is_reading_team",{},access)) throw new Error("Ce compte n’est pas autorisé à consulter les voix.");
+  return access;
+}
+
+async function audioFor(row, token) {
+  return (await api("/storage/v1/object/authenticated/bambara-readings/" + row.id + ".wav",{token})).blob();
+}
+
+function addElement(parent, tag, text) {
+  const element = document.createElement(tag);
+  if (text) element.textContent = text;
+  parent.append(element);
+  return element;
+}
+
+function queueCard(row, token) {
+  const card = addElement(byId("queue"),"article");
+  card.className = "card";
+  addElement(card,"h2",row.sentence_bm);
+  addElement(card,"p",row.speaker + " · " + (row.verdict === "approved" ? "Validée" :
+    row.verdict === "rejected" ? "Refusée" : row.transcribed ? "À valider" : "À transcrire"));
+  const listen = addElement(card,"button","Charger l’audio");
+  listen.className = "secondary";
+  listen.onclick = async () => {
+    listen.disabled = true;
+    try {
+      const blob = await audioFor(row,token);
+      const source = URL.createObjectURL(blob);
+      queueUrls.add(source);
+      const player = document.createElement("audio");
+      player.controls = true;
+      player.src = source;
+      listen.replaceWith(player);
+    } catch (error) { status(error.message,true); listen.disabled = false; }
+  };
+  if (row.verdict) return;
+  const bm = addElement(addElement(card,"label","Transcription bambara"),"textarea");
+  const fr = addElement(addElement(card,"label","Traduction française"),"textarea");
+  bm.value = row.transcript_bm;
+  fr.value = row.translation_fr;
+  bm.maxLength = fr.maxLength = 1000;
+  const chars = addElement(card,"div");
+  chars.className = "row";
+  for (const char of "ɛɔɲŋ") {
+    const key = addElement(chars,"button",char);
+    key.className = "secondary";
+    key.onclick = () => {
+      bm.setRangeText(char,bm.selectionStart,bm.selectionEnd,"end");
+      bm.focus();
+    };
+  }
+  const label = addElement(card,"label");
+  const switched = addElement(label,"input");
+  switched.type = "checkbox";
+  switched.checked = row.code_switching;
+  addElement(label,"span","Mots français prononcés dans la lecture");
+  const controls = addElement(card,"div");
+  controls.className = "row";
+  const actions = row.transcribed && !row.mine
+    ? [["approve","Valider"],["reject","Refuser"]]
+    : [["transcribe","Enregistrer la transcription"]];
+  for (const [action,title] of actions) {
+    const button = addElement(controls,"button",title);
+    if (action === "reject") button.className = "secondary";
+    button.onclick = async () => {
+      if (!bm.value.trim() || !fr.value.trim()) return status("Renseignez la transcription et la traduction.",true);
+      for (const control of controls.children) control.disabled = true;
+      try {
+        await rpc("review_reading",{clip_id:row.id,action,bm:bm.value,fr:fr.value,switched:switched.checked},await tokenFor(teamKey));
+        status("Modification enregistrée.");
+        card.remove();
+      } catch (error) {
+        status(error.message,true);
+        for (const control of controls.children) control.disabled = false;
+      }
+    };
+  }
+}
+
+byId("load-queue").onclick = async () => {
+  const load = byId("load-queue");
+  load.disabled = true;
+  try {
+    const token = await teamAccess();
+    for (const url of queueUrls) URL.revokeObjectURL(url);
+    queueUrls.clear();
+    byId("queue").replaceChildren();
+    async function loadPage(after) {
+      const rows = await rpc("list_readings",{after_id:after},token);
+      rows.forEach((row) => queueCard(row,token));
+      if (rows.length === 30) {
+        const next = addElement(byId("queue"),"button","Lectures suivantes");
+        next.onclick = async () => {
+          next.disabled = true;
+          try { await loadPage(rows.at(-1).id);next.remove(); }
+          catch (error) { status(error.message,true);next.disabled = false; }
+        };
+      }
+      if (!rows.length && !after) status("Il n’y a encore aucune lecture.");
+      else status("");
+    }
+    await loadPage(null);
+  } catch (error) { status(error.message,true); }
+  finally { load.disabled = false; }
+};
+
+function zipStore(files) {
+  const encoder = new TextEncoder();
+  const crcTable = Array.from({length:256},(_,index) => {
+    let crc = index;
+    for (let i=0;i<8;i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    return crc >>> 0;
+  });
+  const chunks = [], directory = [];
+  let offset = 0, centralSize = 0;
+  for (const {name, data} of files) {
+    const filename = encoder.encode(name);
+    let crc = 0xffffffff;
+    for (const byte of data) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 255];
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0,0x04034b50,true);local.setUint16(4,20,true);local.setUint16(12,0x21,true);
+    local.setUint32(14,crc,true);local.setUint32(18,data.length,true);local.setUint32(22,data.length,true);local.setUint16(26,filename.length,true);
+    const central = new DataView(new ArrayBuffer(46));
+    central.setUint32(0,0x02014b50,true);central.setUint16(4,20,true);central.setUint16(6,20,true);central.setUint16(14,0x21,true);
+    central.setUint32(16,crc,true);central.setUint32(20,data.length,true);central.setUint32(24,data.length,true);central.setUint16(28,filename.length,true);central.setUint32(42,offset,true);
+    chunks.push(local.buffer,filename,data);
+    directory.push(central.buffer,filename);
+    offset += 30+filename.length+data.length;
+    centralSize += 46+filename.length;
+  }
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true);end.setUint16(8,files.length,true);end.setUint16(10,files.length,true);
+  end.setUint32(12,centralSize,true);end.setUint32(16,offset,true);
+  return new Blob([...chunks,...directory,end.buffer],{type:"application/zip"});
+}
+
+function assertReadingWave(bytes) {
+  const v = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  if (bytes.byteLength < 16044 || bytes.byteLength > 640044 ||
+      v.getUint32(0) !== 0x52494646 || v.getUint32(8) !== 0x57415645 ||
+      v.getUint32(12) !== 0x666d7420 || v.getUint32(36) !== 0x64617461 ||
+      v.getUint32(4,true) !== bytes.byteLength-8 || v.getUint32(16,true) !== 16 ||
+      v.getUint16(20,true) !== 1 || v.getUint16(22,true) !== 1 ||
+      v.getUint32(24,true) !== sampleRate || v.getUint16(34,true) !== 16 ||
+      v.getUint32(40,true) !== bytes.byteLength-44 || bytes.byteLength % 2) {
+    throw new Error("Une lecture validée ne contient pas un WAV mono 16 kHz conforme.");
+  }
+  return (bytes.byteLength - 44) / (sampleRate * 2);
+}
+
+byId("export").onclick = async () => {
+  const button = byId("export");
+  button.disabled = true;
+  try {
+    let next = null;
+    const rows = [];
+    const publicOnly = byId("public-only").checked;
+    while (true) {
+      const data = await rpc("list_readings",{after_id:next,approved_only:true,public_only:publicOnly},await teamAccess());
+      rows.push(...data);
+      if (rows.length > 500) throw new Error("L’export depuis le téléphone est limité à 500 lectures.");
+      if (data.length < 30) break;
+      next = data.at(-1).id;
+    }
+    if (!rows.length) return status("Aucune lecture validée pour cet export.");
+    const files = [], manifest = [];
+    let token = await teamAccess();
+    for (const row of rows) {
+      if (manifest.length && manifest.length % 20 === 0) token = await teamAccess();
+      status("Export : " + (manifest.length+1) + " / " + rows.length);
+      const bytes = new Uint8Array(await (await audioFor(row,token)).arrayBuffer());
+      const duration = assertReadingWave(bytes);
+      const path = "audio/" + row.id + ".wav";
+      files.push({name:path,data:bytes});
+      manifest.push(JSON.stringify({id:row.id,audio:path,speaker:row.speaker,register:"lu",
+        transcript_bm:row.transcript_bm,translation_fr:row.translation_fr,code_switching:row.code_switching,duration_s:duration}));
+    }
+    files.push({name:"testset.jsonl",data:new TextEncoder().encode(manifest.join("\n")+"\n")});
+    const url = URL.createObjectURL(zipStore(files));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "bambara-lectures" + (publicOnly ? "-diffusables" : "") + ".zip";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    status("Export prêt : " + rows.length + " lecture(s).");
+  } catch (error) { status(error.message,true); }
+  finally { button.disabled = false; }
+};
+
+byId("team-login").onsubmit = async (event) => {
+  event.preventDefault();
+  if (!ready) return status("Le service de collecte est en cours de configuration.",true);
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  try {
+    const url = new URL(location.pathname,location.origin);
+    url.searchParams.set("equipe","1");
+    await api("/auth/v1/otp?redirect_to=" + encodeURIComponent(url.href),
+      {method:"POST",body:{email:byId("email").value.trim(),create_user:false}});
+    status("Vérifiez votre boîte e-mail.");
+  } catch (error) { status(error.message,true); }
+  finally { button.disabled = false; }
+};
+
+byId("logout").onclick = async () => {
+  const session = stored(teamKey);
+  localStorage.removeItem(teamKey);
+  byId("team-actions").hidden = true;
+  byId("team-login").hidden = false;
+  byId("queue").replaceChildren();
+  for (const url of queueUrls) URL.revokeObjectURL(url);
+  queueUrls.clear();
+  if (session?.access_token) {
+    try { await api("/auth/v1/logout?scope=local",{method:"POST",token:session.access_token}); } catch {}
+  }
+  status("Déconnexion effectuée sur cet appareil.");
+};
+
+async function init() {
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  if (location.hash) history.replaceState(null,"",location.pathname+location.search);
+  if (modeTeam) {
+    byId("heading").textContent = "Validation des lectures";
+    byId("intro").textContent = "Écoutez, transcrivez puis faites valider les prises par une deuxième personne.";
+    byId("welcome").hidden = byId("team-link").hidden = true;
+    byId("team").hidden = byId("participant-link").hidden = false;
+    if (!ready) return status("Le service de collecte est en cours de configuration.");
+    if (fragment.get("access_token") && fragment.get("refresh_token")) saveSession(teamKey,Object.fromEntries(fragment));
+    if (stored(teamKey)) {
+      try {
+        await teamAccess();
+        byId("team-login").hidden = true;
+        byId("team-actions").hidden = false;
+      } catch (error) { status(error.message,true); }
+    }
+    return;
+  }
+  if (fragment.has("invitation")) byId("invite").value = fragment.get("invitation");
+  if (ready) {
+    const contact = addElement(byId("contact"),"a","Contacter l’équipe ou demander un retrait");
+    contact.href = "mailto:" + config.contact;
+    if (config.publicNotice) {
+      byId("public-label").hidden = false;
+      byId("public-notice").textContent = config.publicNotice;
+    }
+  } else {
+    byId("join").hidden = true;
+    status("La collecte en ligne n’est pas encore activée.");
+  }
+}
+
+init().catch((error) => status(error.message,true));
+</script>
+</html>
