@@ -102,6 +102,16 @@ une personne âgée, en autant de versions qu'on veut, **lire** des phrases bamb
 l'audio, la comparaison centrale, sur de la parole réelle. Mode d'emploi :
 [`docs/ATELIER.md`](docs/ATELIER.md).
 
+## Collecte web (lectures sur téléphone)
+
+Une page mobile, sans application à installer (`docs/collecte/`), hébergée sur
+GitHub Pages, avec les voix sur Supabase. Le participant lit des phrases en
+bambara, se réécoute, puis envoie. Il reçoit les phrases les moins lues, et
+peut demander « 10 phrases de plus ». L'équipe transcrit, valide à deux et
+exporte un ZIP, que `scripts/collecte_web.py importer` verse dans l'atelier
+pour affiner Soloni. Mise en service et recette :
+[`deployment/COLLECTE_WEB.md`](deployment/COLLECTE_WEB.md).
+
 ## Animation participative (collecte)
 
 Des dessins animés courts pour TikTok, où les personnages parlent avec la

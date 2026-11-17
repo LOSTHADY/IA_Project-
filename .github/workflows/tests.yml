@@ -26,7 +26,15 @@ jobs:
       - name: Dépendances (PyTorch CPU, plus léger que la version CUDA)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt accelerate ctranslate2 pytest pyflakes omegaconf
+          pip install -r requirements.txt accelerate ctranslate2 pytest pyflakes omegaconf "psycopg[binary]"
+
+      # PostgreSQL (préinstallé sur les machines GitHub) : les fonctions SQL de
+      # la collecte web y sont testées (tests/test_collecte_web.py).
+      - name: PostgreSQL pour la collecte web
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "alter user postgres password 'postgres'"
+          echo "COLLECTE_PG_DSN=host=localhost user=postgres password=postgres dbname=postgres" >> "$GITHUB_ENV"
 
       - name: Analyse statique
         run: python -m pyflakes bambara_voice eval scripts app tests animation

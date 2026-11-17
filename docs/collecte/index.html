@@ -18,6 +18,7 @@ button.secondary{background:transparent;color:var(--green)}button:disabled{opaci
 .row{display:flex;gap:.55rem;flex-wrap:wrap;align-items:center;margin:.75rem 0}.phrase{border-left:.3rem solid var(--green);padding:1rem;background:var(--pale);border-radius:.35rem;font-size:clamp(1.35rem,5.6vw,2rem);font-weight:700;line-height:1.3;margin:.9rem 0 1.1rem;overflow-wrap:anywhere}
 .status{min-height:1.65rem;font-weight:650;color:var(--green);overflow-wrap:anywhere}.status[data-error=true]{color:#a1261c}progress,audio{width:100%}progress{accent-color:var(--green)}
 a{color:var(--green)}footer{padding-bottom:2rem;font-size:.9rem}.tag{display:inline-block;background:var(--accent);color:var(--ink);border-radius:.4rem;padding:.15rem .5rem;font-weight:700;font-size:.85rem}
+.hint{font-weight:400;color:var(--muted)}
 [hidden]{display:none!important}
 </style>
 <header><span class="mark" aria-hidden="true">B</span><span>IA Bambara</span></header>
@@ -30,6 +31,13 @@ a{color:var(--green)}footer{padding-bottom:2rem;font-size:.9rem}.tag{display:inl
     <h2>Participer à la collecte</h2>
     <form id="join">
       <label>Prénom ou pseudo <input id="participant-name" required maxlength="60" autocomplete="nickname"></label>
+      <label>Vous êtes <span class="hint">(facultatif)</span>
+        <select id="participant-gender">
+          <option value="">Je préfère ne pas le dire</option>
+          <option value="f">Une femme</option>
+          <option value="m">Un homme</option>
+        </select>
+      </label>
       <p id="research-notice">Votre voix est enregistrée pour évaluer l’assistant vocal en bambara. L’équipe de recherche peut écouter les prises et voir votre prénom ou pseudo.</p>
       <label id="public-label" hidden><input id="public-ok" type="checkbox"><span id="public-notice"></span></label>
       <button id="start" type="submit" aria-describedby="research-notice">J’accepte et je commence</button>
@@ -59,7 +67,10 @@ a{color:var(--green)}footer{padding-bottom:2rem;font-size:.9rem}.tag{display:inl
   <section class="card" id="finished" hidden>
     <h2 id="finish-title">Merci pour votre participation</h2>
     <p id="finish-text"></p>
-    <button class="secondary" id="back">Retour à l’accueil</button>
+    <div class="row">
+      <button id="more">Lire 10 phrases de plus</button>
+      <button class="secondary" id="back">Retour à l’accueil</button>
+    </div>
   </section>
 
   <section class="card" id="team" hidden>
@@ -185,7 +196,9 @@ function showNext() {
     byId("finish-title").textContent = demoMode ? "Essai terminé" : "Merci pour votre participation";
     byId("finish-text").textContent = demoMode
       ? "Votre prise a été traitée uniquement sur cet appareil."
-      : done + " lecture(s) reçue(s). Votre code de participation est " + session.speaker + ".";
+      : done + " lecture(s) reçue(s). Votre code de participation est " + session.speaker
+        + ". Chaque phrase de plus aide l’assistant à comprendre le bambara.";
+    byId("more").hidden = demoMode;
     return;
   }
   byId("progress").max = session.prompts.length;
@@ -217,8 +230,16 @@ byId("join").onsubmit = async (event) => {
   status("Ouverture de votre session…");
   try {
     const token = await tokenFor(participantKey, true);
-    const data = await rpc("open_readings", {display_name, invitation, accept_research:true,
-      accept_public:!byId("public-label").hidden && byId("public-ok").checked}, token);
+    const args = {display_name, invitation, accept_research:true,
+      accept_public:!byId("public-label").hidden && byId("public-ok").checked};
+    const gender = byId("participant-gender").value;
+    let data;
+    try { data = await rpc("open_readings", gender ? {...args, participant_gender:gender} : args, token); }
+    catch (error) {
+      // base pas encore passée à collecte-v2.sql : on participe sans le genre
+      if (!gender || !String(error.message).includes("(404)")) throw error;
+      data = await rpc("open_readings", args, token);
+    }
     showSession(data, false);
     status("");
   } catch (error) { status(error.message, true); }
@@ -366,6 +387,18 @@ byId("send").onclick = async () => {
     showNext();
   } catch (error) { status(error.message + " La prise reste disponible sur cette page.", true); }
   finally { byId("send").disabled = byId("redo").disabled = false; }
+};
+
+byId("more").onclick = async () => {
+  const button = byId("more");
+  button.disabled = true;
+  status("Préparation de nouvelles phrases…");
+  try {
+    const data = await rpc("more_readings", {}, await tokenFor(participantKey));
+    showSession(data, false);
+    status("");
+  } catch (error) { status(error.message, true); }
+  finally { button.disabled = false; }
 };
 
 byId("back").onclick = () => {
@@ -555,7 +588,8 @@ byId("export").onclick = async () => {
       const duration = assertReadingWave(bytes);
       const path = "audio/" + row.id + ".wav";
       files.push({name:path,data:bytes});
-      manifest.push(JSON.stringify({id:row.id,audio:path,speaker:row.speaker,register:"lu",
+      manifest.push(JSON.stringify({id:row.id,audio:path,speaker:row.speaker,gender:row.gender ?? "",
+        prompt_id:row.prompt_id ?? null,register:"lu",
         transcript_bm:row.transcript_bm,translation_fr:row.translation_fr,code_switching:row.code_switching,duration_s:duration}));
     }
     files.push({name:"testset.jsonl",data:new TextEncoder().encode(manifest.join("\n")+"\n")});
